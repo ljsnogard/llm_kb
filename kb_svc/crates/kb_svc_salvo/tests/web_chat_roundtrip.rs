@@ -244,13 +244,30 @@ async fn browser_question_reaches_plugin_and_answers_stream_back() {
     assert_eq!(ask["service"]["model"], "deepseek-chat");
     assert_eq!(ask["service"]["api_key"], "sk-test");
 
-    // 插件上报事件。
+    // 插件上报事件。内容分片一律是 `raw` + rig 的原始载荷，
+    // 由 `kb_rig_llm_v1_adapt` 在服务端翻译（dev-notes §2.2 / §2.3）。
     for event in [
         serde_json::json!({ "type": "started", "turn_id": "t1", "model": "deepseek-chat" }),
-        serde_json::json!({ "type": "delta", "turn_id": "t1", "kind": "reasoning", "text": "先想一下" }),
-        serde_json::json!({ "type": "delta", "turn_id": "t1", "kind": "answer", "text": "我是" }),
-        serde_json::json!({ "type": "delta", "turn_id": "t1", "kind": "answer", "text": "一个助手" }),
-        serde_json::json!({ "type": "usage", "turn_id": "t1", "input_tokens": 12, "output_tokens": 5, "total_tokens": 17 }),
+        serde_json::json!({
+            "type": "raw",
+            "turn_id": "t1",
+            "payload": { "type": "reasoningDelta", "id": "r1", "reasoning": "先想一下" }
+        }),
+        serde_json::json!({
+            "type": "raw",
+            "turn_id": "t1",
+            "payload": { "type": "text", "text": "我是" }
+        }),
+        serde_json::json!({
+            "type": "raw",
+            "turn_id": "t1",
+            "payload": { "type": "text", "text": "一个助手" }
+        }),
+        serde_json::json!({
+            "type": "raw",
+            "turn_id": "t1",
+            "payload": { "input_tokens": 12, "output_tokens": 5 }
+        }),
         serde_json::json!({ "type": "finished", "turn_id": "t1", "reason": "completed" }),
     ] {
         send_json(&mut plugin, &event).await;
@@ -261,21 +278,23 @@ async fn browser_question_reaches_plugin_and_answers_stream_back() {
     assert_eq!(started["service_id"], "deepseek");
     assert_eq!(started["model"], "deepseek-chat");
 
+    // 字段名与 `abs_llm::v1` 对齐：`logic` + `text`。
     let reasoning = recv_event(&mut chat).await;
     assert_eq!(reasoning["type"], "delta");
-    assert_eq!(reasoning["kind"], "reasoning");
+    assert_eq!(reasoning["logic"], "reasoning");
     assert_eq!(reasoning["text"], "先想一下");
 
     let answer1 = recv_event(&mut chat).await;
-    assert_eq!(answer1["kind"], "answer");
+    assert_eq!(answer1["logic"], "answer");
     assert_eq!(answer1["text"], "我是");
 
     let answer2 = recv_event(&mut chat).await;
     assert_eq!(answer2["text"], "一个助手");
 
+    // 用量在嵌套的 `usage` 对象里。
     let usage = recv_event(&mut chat).await;
     assert_eq!(usage["type"], "usage");
-    assert_eq!(usage["total_tokens"], 17);
+    assert_eq!(usage["usage"]["total_tokens"], 17);
 
     let finished = recv_event(&mut chat).await;
     assert_eq!(finished["type"], "finished");

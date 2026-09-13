@@ -1,15 +1,7 @@
-use core::{
-    error,
-    fmt,
-    ops::Deref,
-    time::Duration,
-};
+use core::{error, fmt, ops::Deref, time::Duration};
 
 use abs_mm::mem_alloc::CoreAlloc;
-use mm_ptr::{
-    Owned,
-    x_deps::abs_mm,
-};
+use mm_ptr::{Owned, x_deps::abs_mm};
 
 // ============================================================================
 // 基础错误
@@ -40,9 +32,7 @@ where
     Unsupported(S),
 
     /// 服务端拒绝了请求，例如认证失败、权限不足、请求非法等。
-    RequestRejected {
-        message: S,
-    },
+    RequestRejected { message: S },
 
     /// 服务端限流。
     RateLimited {
@@ -51,9 +41,7 @@ where
     },
 
     /// 服务端内部错误。
-    Server {
-        message: S,
-    },
+    Server { message: S },
 
     /// 其它无法归类的错误。
     Other(E),
@@ -87,7 +75,4 @@ where
     }
 }
 
-impl<S> error::Error for LlmError<S>
-where
-    S: Deref<Target = str>,
-{}
+impl<S> error::Error for LlmError<S> where S: Deref<Target = str> {}

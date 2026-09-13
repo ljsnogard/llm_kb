@@ -21,9 +21,14 @@ use std::{
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
+use kb_rig_llm_v1_adapt::event::AdaptedEvent;
+
 use crate::{
     settings::{LlmServiceConfig, SettingsStore},
-    wire::{ClientMessage, ErrorCode, FinishReason, PluginEvent, PluginRequest, ServerMessage},
+    wire::{
+        ClientMessage, ErrorCode, FinishReason, LogicOutput, PluginEvent, PluginRequest,
+        ServerMessage, Usage,
+    },
 };
 
 /// 服务端版本，随 `ready` 帧下发，便于排查前后端不一致。
@@ -86,6 +91,33 @@ impl HubError {
             code: self.code,
             message: self.message,
         }
+    }
+}
+
+/// 把 adapter 的逻辑分类映射成线协议枚举。
+///
+/// 两个枚举的变体一一对应，这里显式列出而不是用 `From` 派生，
+/// 是为了将来任一侧新增变体时编译器会在这里报错，而不是悄悄漏掉。
+fn to_wire_logic(value: kb_rig_llm_v1_adapt::event::LogicOutput) -> LogicOutput {
+    use kb_rig_llm_v1_adapt::event::LogicOutput as Adapted;
+    match value {
+        Adapted::Answer => LogicOutput::Answer,
+        Adapted::Reasoning => LogicOutput::Reasoning,
+        Adapted::FunctionCall => LogicOutput::FunctionCall,
+        Adapted::DynamicSearchCall => LogicOutput::DynamicSearchCall,
+        Adapted::StaticSearchCall => LogicOutput::StaticSearchCall,
+    }
+}
+
+/// 把 adapter 的结束原因映射成线协议枚举。
+fn to_wire_finish_reason(value: kb_rig_llm_v1_adapt::event::FinishReason) -> FinishReason {
+    use kb_rig_llm_v1_adapt::event::FinishReason as Adapted;
+    match value {
+        Adapted::Completed => FinishReason::Completed,
+        Adapted::MaxTokens => FinishReason::MaxTokens,
+        Adapted::Cancelled => FinishReason::Cancelled,
+        Adapted::ToolCall => FinishReason::ToolCall,
+        Adapted::Other => FinishReason::Other,
     }
 }
 
@@ -420,7 +452,7 @@ impl AppState {
         // 立刻把取消结果告诉界面：不等待插件回执，避免取消按钮看起来「没反应」。
         self.broadcast(ServerMessage::Finished {
             turn_id: active.turn_id.clone(),
-            reason: FinishReason::Cancelled,
+            reason: Some(FinishReason::Cancelled),
         });
         *self
             .0
@@ -456,7 +488,13 @@ impl AppState {
 
     /// 处理一条来自插件的事件。
     ///
-    /// 插件事件会被转换成浏览器事件并广播；与当前 turn 无关的事件会被丢弃。
+    /// # 两条路径
+    ///
+    /// - **信封路径**：`Started` / `Finished` / `Error` 由服务端直接处理，用来维护
+    ///   turn 状态；
+    /// - **内容路径**：`Raw` 里装的是 rig 的原始 JSON，服务端**不理解它**，只是转交给
+    ///   [`kb_rig_llm_v1_adapt`] 翻译成 `abs_llm::v1` 形状，再广播给浏览器
+    ///   （`dev-notes.md` §2.2 / §2.3 / §2.4）。
     pub fn handle_plugin_event(&self, event: PluginEvent) {
         match event {
             PluginEvent::Hello { .. } | PluginEvent::Pong => {
@@ -465,7 +503,7 @@ impl AppState {
             PluginEvent::Started {
                 turn_id,
                 model,
-                capabilities: _,
+                capabilities,
             } => {
                 let mut guard = self
                     .0
@@ -486,57 +524,11 @@ impl AppState {
                     turn_id,
                     service_id,
                     model,
+                    capabilities,
                 });
             }
-            PluginEvent::Delta {
-                turn_id,
-                kind,
-                text,
-            } => {
-                if !self.is_active_turn(&turn_id) {
-                    log::debug!("忽略与当前 turn 无关的 delta: {turn_id}");
-                    return;
-                }
-
-                self.broadcast(ServerMessage::Delta {
-                    turn_id,
-                    kind,
-                    text,
-                });
-            }
-            PluginEvent::ToolCall {
-                turn_id,
-                id,
-                name,
-                arguments,
-            } => {
-                if !self.is_active_turn(&turn_id) {
-                    return;
-                }
-
-                self.broadcast(ServerMessage::ToolCall {
-                    turn_id,
-                    id,
-                    name,
-                    arguments,
-                });
-            }
-            PluginEvent::Usage {
-                turn_id,
-                input_tokens,
-                output_tokens,
-                total_tokens,
-            } => {
-                if !self.is_active_turn(&turn_id) {
-                    return;
-                }
-
-                self.broadcast(ServerMessage::Usage {
-                    turn_id,
-                    input_tokens,
-                    output_tokens,
-                    total_tokens,
-                });
+            PluginEvent::Raw { turn_id, payload } => {
+                self.handle_raw_payload(&turn_id, &payload);
             }
             PluginEvent::Finished { turn_id, reason } => {
                 if !self.is_active_turn(&turn_id) {
@@ -558,8 +550,87 @@ impl AppState {
 
                 self.broadcast(ServerMessage::Error {
                     turn_id: turn_id.clone(),
-                    code: ErrorCode::Internal,
+                    code: ErrorCode::Provider,
                     message,
+                });
+                let _ = self.take_active_turn();
+            }
+        }
+    }
+
+    /// 把一条 rig 原始载荷翻译成 `abs_llm::v1` 形状并广播。
+    ///
+    /// 翻译失败的载荷**只记日志不报错**：provider 会不断新增分片类型，
+    /// 为了一个不认识的字段就把整轮对话打断是不划算的。
+    fn handle_raw_payload(&self, turn_id: &str, payload: &serde_json::Value) {
+        if !self.is_active_turn(turn_id) {
+            log::debug!("忽略与当前 turn 无关的原始载荷: {turn_id}");
+            return;
+        }
+
+        // 1) 先看它是不是「用量」——rig 把用量放在最终响应里，而不是普通分片。
+        if let Some(usage) = AdaptedEvent::usage_from_payload(payload) {
+            self.broadcast(ServerMessage::Usage {
+                turn_id: turn_id.to_string(),
+                usage: Usage {
+                    input_tokens: usage.input().map(|value| value as u64),
+                    output_tokens: usage.output().map(|value| value as u64),
+                    total_tokens: usage.total().map(|value| value as u64),
+                },
+            });
+            return;
+        }
+
+        // 2) 再看它是不是结束原因。
+        if let Some(reason) = payload
+            .get("finish_reason")
+            .and_then(|value| value.as_str())
+            .and_then(AdaptedEvent::finish_reason_from_str)
+        {
+            self.broadcast(ServerMessage::Finished {
+                turn_id: turn_id.to_string(),
+                reason: Some(to_wire_finish_reason(reason)),
+            });
+            let _ = self.take_active_turn();
+            return;
+        }
+
+        // 3) 其余按内容分片处理。
+        let Some(event) = AdaptedEvent::from_payload(payload) else {
+            log::debug!("无法转换的插件载荷（已忽略）: {payload}");
+            return;
+        };
+
+        match event {
+            AdaptedEvent::TextDelta(delta) => {
+                self.broadcast(ServerMessage::Delta {
+                    turn_id: turn_id.to_string(),
+                    logic: to_wire_logic(delta.logic_kind()),
+                    text: delta.text_ref().to_string(),
+                });
+            }
+            AdaptedEvent::ToolCall(call) => {
+                self.broadcast(ServerMessage::ToolCall {
+                    turn_id: turn_id.to_string(),
+                    id: call.id_ref().to_string(),
+                    name: call.name_ref().to_string(),
+                    arguments: call.arguments_ref().to_string(),
+                });
+            }
+            AdaptedEvent::Usage(usage) => {
+                self.broadcast(ServerMessage::Usage {
+                    turn_id: turn_id.to_string(),
+                    usage: Usage {
+                        input_tokens: usage.input().map(|value| value as u64),
+                        output_tokens: usage.output().map(|value| value as u64),
+                        total_tokens: usage.total().map(|value| value as u64),
+                    },
+                });
+            }
+            AdaptedEvent::Finished { reason } => {
+                self.broadcast(ServerMessage::Finished {
+                    turn_id: turn_id.to_string(),
+                    reason: reason.map(to_wire_finish_reason),
                 });
                 let _ = self.take_active_turn();
             }
@@ -589,7 +660,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::LogicKind;
+    use crate::wire::{Capabilities, LogicOutput};
 
     /// 构造一份带 `deepseek` 服务的共享状态（内存存储，不触碰文件系统）。
     async fn state_with_service(with_key: bool) -> AppState {
@@ -754,27 +825,24 @@ mod tests {
         state.handle_plugin_event(PluginEvent::Started {
             turn_id: "t1".to_string(),
             model: "deepseek-chat".to_string(),
-            capabilities: vec![],
+            capabilities: Capabilities::default(),
         });
-        state.handle_plugin_event(PluginEvent::Delta {
+        // 以下三条都是「rig 的原始载荷」，由 adapter 翻译成 abs_llm::v1 形状。
+        state.handle_plugin_event(PluginEvent::Raw {
             turn_id: "t1".to_string(),
-            kind: LogicKind::Answer,
-            text: "你好".to_string(),
+            payload: serde_json::json!({ "type": "text_delta", "text": "你好" }),
         });
-        state.handle_plugin_event(PluginEvent::Delta {
+        state.handle_plugin_event(PluginEvent::Raw {
             turn_id: "t1".to_string(),
-            kind: LogicKind::Reasoning,
-            text: "先想想".to_string(),
+            payload: serde_json::json!({ "type": "reasoning_delta", "reasoning": "先想想" }),
         });
-        state.handle_plugin_event(PluginEvent::Usage {
+        state.handle_plugin_event(PluginEvent::Raw {
             turn_id: "t1".to_string(),
-            input_tokens: Some(10),
-            output_tokens: Some(2),
-            total_tokens: Some(12),
+            payload: serde_json::json!({ "prompt_tokens": 10, "completion_tokens": 2 }),
         });
         state.handle_plugin_event(PluginEvent::Finished {
             turn_id: "t1".to_string(),
-            reason: FinishReason::Completed,
+            reason: Some(FinishReason::Completed),
         });
 
         let mut seen = Vec::new();
@@ -788,23 +856,20 @@ mod tests {
         ));
         assert!(matches!(
             &seen[1],
-            ServerMessage::Delta { kind: LogicKind::Answer, text, .. } if text == "你好"
+            ServerMessage::Delta { logic: LogicOutput::Answer, text, .. } if text == "你好"
         ));
         assert!(matches!(
             &seen[2],
-            ServerMessage::Delta { kind: LogicKind::Reasoning, text, .. } if text == "先想想"
+            ServerMessage::Delta { logic: LogicOutput::Reasoning, text, .. } if text == "先想想"
         ));
         assert!(matches!(
             &seen[3],
-            ServerMessage::Usage {
-                total_tokens: Some(12),
-                ..
-            }
+            ServerMessage::Usage { usage, .. } if usage.total_tokens == Some(12)
         ));
         assert!(matches!(
             &seen[4],
             ServerMessage::Finished {
-                reason: FinishReason::Completed,
+                reason: Some(FinishReason::Completed),
                 ..
             }
         ));
@@ -849,7 +914,7 @@ mod tests {
         match events.recv().await.expect("应当有广播") {
             ServerMessage::Finished { turn_id, reason } => {
                 assert_eq!(turn_id, "t1");
-                assert_eq!(reason, FinishReason::Cancelled);
+                assert_eq!(reason, Some(FinishReason::Cancelled));
             }
             other => panic!("应当收到 finished，实际: {other:?}"),
         }
@@ -898,10 +963,9 @@ mod tests {
         let state = state_with_service(true).await;
         let mut events = state.subscribe();
 
-        state.handle_plugin_event(PluginEvent::Delta {
+        state.handle_plugin_event(PluginEvent::Raw {
             turn_id: "ghost".to_string(),
-            kind: LogicKind::Answer,
-            text: "不该出现".to_string(),
+            payload: serde_json::json!({ "type": "text_delta", "text": "不该出现" }),
         });
 
         assert!(events.try_recv().is_err(), "无关事件不应产生广播");

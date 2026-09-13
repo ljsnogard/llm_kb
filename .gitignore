@@ -4,3 +4,14 @@
 **/.vs
 **/.vscode
 **/.zed
+
+# Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+
+# 本机沙箱绕行用的 Cargo 缓存；不要提交
+/external/cargo-home/

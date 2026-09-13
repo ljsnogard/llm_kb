@@ -1,9 +1,15 @@
 [package]
 edition = "2024"
-name = "kb_rig_llm_adapt"
+name = "kb_rig_llm_v1_adapt"
 version = "0.1.0"
 
 description = "Conversion logics between `Rig` types to `abs_llm` types."
 
+# 本 crate 的职责是「rig 数据 ↔ abs_llm::v1」，因此：
+# - 依赖 `abs_llm` 拿到语义定义；
+# - 依赖 serde，用于定义具体载荷的线上表示；`abs_llm` 临时为纯语义类型
+#   提供基础 serde 派生（dev-notes §2.5），但具体 wire 细节仍在本 crate。
 [dependencies]
-abs_llm = { path = "../../kb_svc/crates/abs_llm" }
+abs_llm = { path = "../../../kb_svc/crates/abs_llm" }
+serde = { version = "1.*", features = ["derive"] }
+serde_json = { version = "1.*" }

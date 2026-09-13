@@ -7,6 +7,7 @@ description = "Implement KB Service with Salvo"
 
 # 只属于本 crate 的依赖直接写在这里；只有跨成员共用的依赖才放 workspace。
 [dependencies]
+kb_rig_llm_v1_adapt = { path = "../../../kb_plugins/crates/kb_rig_llm_v1_adapt" }
 log = { workspace = true }
 salvo = { version = "0.96.*", default-features = false, features = [
     "server",

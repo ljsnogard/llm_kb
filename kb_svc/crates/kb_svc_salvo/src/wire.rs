@@ -1,36 +1,54 @@
-//! 服务端 ↔ 浏览器、服务端 ↔ 插件 的线协议。
+//! 线协议：服务端 ↔ 浏览器、服务端 ↔ 插件。
 //!
-//! 协议是 JSON 文本帧（WebSocket 的 text message），字段命名与 `abs_llm::v1`
-//! 的词汇对齐：`delta` 对应 `LlmRespEvent::TextDelta` + `LogicOutput`，
-//! `finished` 对应 `FinishReason`，`usage` 对应 `TrUsage`。
+//! # 两条方向的格式并不相同（刻意如此）
 //!
-//! # 为什么单独一个模块
+//! | 方向 | 格式 | 为什么 |
+//! | :--- | :--- | :--- |
+//! | 服务端 ↔ 插件 | 固定信封 + [`serde_json::Value`] 原始载荷 | agent 用 rig 说话，服务端**不解释**它，只做搬运（见 `dev-notes.md` §2.3） |
+//! | 服务端 ↔ 浏览器 | 严格按 `abs_llm::v1` 的词汇 | 界面只应该看到统一抽象，见 `dev-notes.md` §2.4 |
 //!
-//! 两段协议（浏览器段、插件段）共用同一套「助手输出事件」。把它们放在一起可以
-//! 保证「服务端只是转发，不做语义翻译」这一约束在类型层面成立。
+//! 两者的翻译由 `kb_rig_llm_v1_adapt` 完成（见 `dev-notes.md` §2.2），
+//! 因此本模块**不引入 `abs_llm` 依赖**：它只负责「帧的外形」，语义映射属于 adapter。
 //!
-//! # 与 DSH 的对照
+//! # `abs_llm::v1` 的词汇对照
 //!
-//! DSH 的流式分片是 `{type:'text-delta'|'reasoning-delta', index, text}`。
-//! 这里保留了「文本/推理分开」的语义，但把两者合并成一个 `delta` 帧加 `kind` 字段，
-//! 便于与 [`crate::hub::LogicKind`] 一一对应。
+//! | 本模块 | `abs_llm::v1` |
+//! | :--- | :--- |
+//! | [`LogicOutput`] | `cont::LogicOutput`（五个变体逐一对应） |
+//! | [`FinishReason`] | `cont::FinishReason` |
+//! | [`Usage`] | `TrUsage`（三个可选计数） |
+//! | [`Capabilities`] | `cont::Capabilities`（四个能力位） |
+//! | [`ServerMessage::Delta`] 的 `logic` + `text` | `TrTextDelta::logic` + `text` |
 
 use serde::{Deserialize, Serialize};
 
 use crate::settings::LlmServiceConfig;
 
-/// 助手输出文本的类别，对应 `abs_llm::v1::LogicOutput` 的应用侧子集。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum LogicKind {
-    /// 面向最终答案的正文。
+/// 助手输出文本所属的逻辑部分。
+///
+/// 与 `abs_llm::v1::cont::LogicOutput` 一一对应。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogicOutput {
+    /// 面向最终答案的文本。
     Answer,
 
-    /// Provider 公开的 reasoning 内容。
+    /// Provider 愿意公开的 reasoning 内容。
     Reasoning,
+
+    /// 请求中要求执行的函数调用。
+    FunctionCall,
+
+    /// 动态内容搜索（结果不稳定）。
+    DynamicSearchCall,
+
+    /// 静态内容搜索（结果稳定）。
+    StaticSearchCall,
 }
 
-/// 生成结束的原因，对应 `abs_llm::v1::FinishReason`。
+/// 生成结束的原因；与 `abs_llm::v1::cont::FinishReason` 一一对应。
+///
+/// 用 `Option` 承载是因为**并非所有 provider 都会给出**结束原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FinishReason {
@@ -48,6 +66,44 @@ pub enum FinishReason {
 
     /// 其它原因。
     Other,
+}
+
+/// Token 用量；对应 `abs_llm::v1::TrUsage`。
+///
+/// 三个字段都可缺省：provider 不保证提供精确值。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Usage {
+    /// 输入 token 数。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+
+    /// 输出 token 数。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+
+    /// 总 token 数。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
+}
+
+/// 模型能力；对应 `abs_llm::v1::cont::Capabilities`。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Capabilities {
+    /// 是否能够连续返回增量输出。
+    #[serde(default)]
+    pub streaming: bool,
+
+    /// 是否能够返回独立的 reasoning 内容。
+    #[serde(default)]
+    pub reasoning: bool,
+
+    /// 是否支持多模态输入。
+    #[serde(default)]
+    pub multimodal_input: bool,
+
+    /// 是否支持工具调用。
+    #[serde(default)]
+    pub tool_calling: bool,
 }
 
 // ============================================================================
@@ -78,19 +134,21 @@ pub enum ServerMessage {
         service_id: String,
         /// 实际使用的模型名。
         model: String,
+        /// 插件自报的能力。
+        capabilities: Capabilities,
     },
 
-    /// 一段增量文本。
+    /// 一段增量文本；对应 `LlmRespEvent::TextDelta`。
     Delta {
         /// turn 标识。
         turn_id: String,
-        /// 这段文本属于正文还是 reasoning。
-        kind: LogicKind,
+        /// 这段文本属于哪个逻辑部分（answer / reasoning / …）。
+        logic: LogicOutput,
         /// 文本片段。
         text: String,
     },
 
-    /// 模型要求调用工具。
+    /// 模型要求调用工具；对应 `LlmRespEvent::ToolCall`。
     ToolCall {
         /// turn 标识。
         turn_id: String,
@@ -102,24 +160,20 @@ pub enum ServerMessage {
         arguments: String,
     },
 
-    /// 用量信息。
+    /// 用量信息；对应 `LlmRespEvent::Usage`。
     Usage {
         /// turn 标识。
         turn_id: String,
-        /// 输入 token 数。
-        input_tokens: Option<u64>,
-        /// 输出 token 数。
-        output_tokens: Option<u64>,
-        /// 总 token 数。
-        total_tokens: Option<u64>,
+        /// 用量明细。
+        usage: Usage,
     },
 
-    /// 本轮生成结束。
+    /// 本轮生成结束；对应 `LlmRespEvent::Finished`。
     Finished {
         /// turn 标识。
         turn_id: String,
         /// 结束原因。
-        reason: FinishReason,
+        reason: Option<FinishReason>,
     },
 
     /// 请求或转发过程中的错误。
@@ -149,6 +203,9 @@ pub enum ErrorCode {
     /// 插件当前不在线。
     PluginOffline,
 
+    /// 插件上报了 provider 侧的错误。
+    Provider,
+
     /// 服务端内部错误。
     Internal,
 }
@@ -166,8 +223,10 @@ pub enum ClientMessage {
         /// 客户端生成的 turn 标识；缺省时由服务端生成。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turn_id: Option<String>,
+
         /// 问题正文。
         question: String,
+
         /// 使用的服务标识；缺省时用当前生效的服务。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         service_id: Option<String>,
@@ -191,6 +250,9 @@ pub enum ClientMessage {
 // ============================================================================
 
 /// 服务端下发给插件的指令。
+///
+/// `Ask` 里的 `service` 是完整配置（含 API key），由 agent 侧自行决定怎么用；
+/// 服务端不理解 rig 的任何细节。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PluginRequest {
@@ -201,7 +263,7 @@ pub enum PluginRequest {
     Ask {
         /// turn 标识。
         turn_id: String,
-        /// 服务标识（插件据此选择 provider 实现）。
+        /// 服务标识（agent 据此选择 provider 实现）。
         service_id: String,
         /// 该服务的完整配置，含 API key。
         service: LlmServiceConfig,
@@ -220,6 +282,14 @@ pub enum PluginRequest {
 }
 
 /// 插件上报给服务端的事件。
+///
+/// # 「原样透传」的含义
+///
+/// [`PluginEvent::Raw`] 是唯一携带生成内容的帧：`payload` 就是 rig 产出的原始
+/// JSON，服务端**不做解析**，交给 `kb_rig_llm_v1_adapt` 翻译。
+///
+/// 其余变体（握手、开始、结束、错误）是「信封级」信息，服务端需要它们来维护
+/// turn 状态，因此在这里就有明确字段。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PluginEvent {
@@ -231,57 +301,34 @@ pub enum PluginEvent {
         providers: Vec<String>,
     },
 
-    /// 插件确认开始生成。
+    /// 开始生成。
     Started {
         /// turn 标识。
         turn_id: String,
         /// 实际使用的模型名。
         model: String,
-        /// 插件自报的能力（`abs_llm::v1::Capabilities` 的字符串化形式）。
+        /// 插件自报的能力。
         #[serde(default)]
-        capabilities: Vec<String>,
+        capabilities: Capabilities,
     },
 
-    /// 增量文本。
-    Delta {
+    /// **原样的 rig 数据**：一条流式分片。
+    ///
+    /// `payload` 的结构由 rig 决定，也就由 `kb_rig_llm_v1_adapt` 解读。
+    Raw {
         /// turn 标识。
         turn_id: String,
-        /// 文本类别。
-        kind: LogicKind,
-        /// 文本片段。
-        text: String,
-    },
-
-    /// 工具调用。
-    ToolCall {
-        /// turn 标识。
-        turn_id: String,
-        /// 工具调用标识。
-        id: String,
-        /// 工具名。
-        name: String,
-        /// 参数（原始 JSON 文本）。
-        arguments: String,
-    },
-
-    /// 用量。
-    Usage {
-        /// turn 标识。
-        turn_id: String,
-        /// 输入 token 数。
-        input_tokens: Option<u64>,
-        /// 输出 token 数。
-        output_tokens: Option<u64>,
-        /// 总 token 数。
-        total_tokens: Option<u64>,
+        /// rig 产出的原始 JSON。
+        payload: serde_json::Value,
     },
 
     /// 生成结束。
     Finished {
         /// turn 标识。
         turn_id: String,
-        /// 结束原因。
-        reason: FinishReason,
+        /// 结束原因；插件可能无法给出。
+        #[serde(default)]
+        reason: Option<FinishReason>,
     },
 
     /// 插件侧错误。
@@ -321,38 +368,117 @@ mod tests {
         assert_eq!(parsed, message);
     }
 
-    /// 测试服务端增量帧的 JSON 形状与 `abs_llm` 词汇一致。
+    /// 测试增量帧使用 `abs_llm` 的词汇（`logic` + `text`）。
     ///
     /// - 手段：把一条 `Delta` 序列化为 JSON 字符串。
-    /// - 判断：包含 `"type":"delta"`、`"kind":"reasoning"` 与 `"text"` 字段。
+    /// - 判断：包含 `"type":"delta"`、`"logic":"reasoning"` 与 `"text"`，
+    ///   即与 `TrTextDelta::logic` / `text` 的命名一致。
     #[test]
-    fn server_delta_uses_kind_and_text() {
+    fn server_delta_uses_logic_and_text() {
         let message = ServerMessage::Delta {
             turn_id: "t1".to_string(),
-            kind: LogicKind::Reasoning,
+            logic: LogicOutput::Reasoning,
             text: "思考中".to_string(),
         };
 
         let json = serde_json::to_string(&message).expect("应当能序列化");
         assert!(json.contains(r#""type":"delta""#), "实际 JSON: {json}");
-        assert!(json.contains(r#""kind":"reasoning""#), "实际 JSON: {json}");
+        assert!(json.contains(r#""logic":"reasoning""#), "实际 JSON: {json}");
         assert!(json.contains(r#""text":"思考中""#), "实际 JSON: {json}");
     }
 
-    /// 测试插件错误帧允许不带 turn 标识。
+    /// 测试 `LogicOutput` 的五个变体与 `abs_llm::v1` 的命名一致。
     ///
-    /// - 手段：构造 `PluginEvent::Error { turn_id: None }` 并序列化。
-    /// - 判断：JSON 中 `turn_id` 为 `null`，反序列化后仍为 `None`。
+    /// - 手段：逐个序列化五个变体。
+    /// - 判断：得到 `answer` / `reasoning` / `function_call` /
+    ///   `dynamic_search_call` / `static_search_call` 五个 snake_case 字符串。
     #[test]
-    fn plugin_error_allows_missing_turn() {
-        let message = PluginEvent::Error {
-            turn_id: None,
-            message: "boom".to_string(),
+    fn logic_output_covers_all_abs_llm_variants() {
+        let cases = [
+            (LogicOutput::Answer, "answer"),
+            (LogicOutput::Reasoning, "reasoning"),
+            (LogicOutput::FunctionCall, "function_call"),
+            (LogicOutput::DynamicSearchCall, "dynamic_search_call"),
+            (LogicOutput::StaticSearchCall, "static_search_call"),
+        ];
+
+        for (value, expected) in cases {
+            let json = serde_json::to_string(&value).expect("应当能序列化");
+            assert_eq!(json, format!("\"{expected}\""));
+        }
+    }
+
+    /// 测试用量帧的三个计数都可缺省。
+    ///
+    /// - 手段：构造一个只填 `total_tokens` 的 `Usage`，序列化后反序列化。
+    /// - 判断：JSON 中不含 `input_tokens` / `output_tokens`；解析回来的两个字段
+    ///   为 `None`、`total_tokens` 保持原值。
+    #[test]
+    fn usage_omits_unknown_counters() {
+        let message = ServerMessage::Usage {
+            turn_id: "t1".to_string(),
+            usage: Usage {
+                input_tokens: None,
+                output_tokens: None,
+                total_tokens: Some(17),
+            },
         };
 
         let json = serde_json::to_string(&message).expect("应当能序列化");
-        assert!(json.contains(r#""turn_id":null"#), "实际 JSON: {json}");
+        assert!(!json.contains("input_tokens"), "实际 JSON: {json}");
 
+        let parsed: ServerMessage = serde_json::from_str(&json).expect("应当能反序列化");
+        match parsed {
+            ServerMessage::Usage { usage, .. } => {
+                assert_eq!(usage.input_tokens, None);
+                assert_eq!(usage.total_tokens, Some(17));
+            }
+            other => panic!("应当是 usage，实际: {other:?}"),
+        }
+    }
+
+    /// 测试插件原始帧可以承载任意 JSON 而不丢失字段。
+    ///
+    /// - 手段：构造一条 `PluginEvent::Raw`，`payload` 是一段嵌套的、含数组与
+    ///   `null` 的对象；序列化后反序列化。
+    /// - 判断：往返后 `payload` 与原始值完全相等，证明服务端不需要理解 rig 的结构。
+    #[test]
+    fn plugin_raw_payload_round_trips_unchanged() {
+        let payload = serde_json::json!({
+            "type": "text_delta",
+            "index": 0,
+            "text": "你好",
+            "nested": { "a": [1, 2, null], "b": { "c": true } }
+        });
+
+        let message = PluginEvent::Raw {
+            turn_id: "t1".to_string(),
+            payload: payload.clone(),
+        };
+
+        let json = serde_json::to_string(&message).expect("应当能序列化");
+        let parsed: PluginEvent = serde_json::from_str(&json).expect("应当能反序列化");
+
+        match parsed {
+            PluginEvent::Raw {
+                payload: parsed, ..
+            } => assert_eq!(parsed, payload),
+            other => panic!("应当是 raw，实际: {other:?}"),
+        }
+    }
+
+    /// 测试插件结束帧允许缺省的结束原因。
+    ///
+    /// - 手段：构造 `PluginEvent::Finished { reason: None }` 并序列化。
+    /// - 判断：反序列化后 `reason` 仍为 `None`（`#[serde(default)]` 生效）。
+    #[test]
+    fn plugin_finished_allows_missing_reason() {
+        let message = PluginEvent::Finished {
+            turn_id: "t1".to_string(),
+            reason: None,
+        };
+
+        let json = serde_json::to_string(&message).expect("应当能序列化");
         let parsed: PluginEvent = serde_json::from_str(&json).expect("应当能反序列化");
         assert_eq!(parsed, message);
     }

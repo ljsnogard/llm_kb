@@ -1,10 +1,13 @@
 use core::ops::{Deref, Try};
 
 use abs_str::string_view::TrStringView;
+use serde::{Deserialize, Serialize};
 
 pub trait TrMediaSource {
     type MimeStr: Deref<Target = str>;
-    type Reader<'f> where Self: 'f;
+    type Reader<'f>
+    where
+        Self: 'f;
 
     fn try_get_mime(&self) -> Option<Self::MimeStr>;
 
@@ -32,7 +35,8 @@ where
 ///
 /// 这里只保留跨大多数 LLM API 都成立的语义。
 /// 不在这里加入某个 Provider 独有的角色。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Role {
     /// 行为与约束，提示词
     System,
@@ -55,7 +59,8 @@ pub enum Role {
 ///
 /// 这里的目标不是描述 Provider 的全部功能，而是帮助上层在运行时判断
 /// 某项通用能力是否存在。
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Capabilities {
     /// 是否能够连续返回增量输出。
     pub streaming: bool,
@@ -83,7 +88,8 @@ pub struct Capabilities {
 /// Reasoning 与 Answer 必须分开，而不能简单地把所有文字都放到一个
 /// String 中。这样 UI 才可以选择样式，同时上下文管理的时候才有区分。
 /// 同时，上层完全不需要知道这是 OpenAI、Anthropic 还是本地模型。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LogicOutput {
     /// 面向最终答案的文本。
     Answer,
@@ -100,7 +106,7 @@ pub enum LogicOutput {
 
     /// 对静态内容的搜索结果，例如文本内搜索，结果在较长时间尺度内是稳定的。
     /// 静态内容通常不需要额外存储，因为总是可以找到固定来源。
-    StaticSearchCall
+    StaticSearchCall,
 }
 
 /// 一段增量输出。
@@ -164,7 +170,8 @@ where
     Usage(U),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FinishReason {
     Completed,
     MaxTokens,

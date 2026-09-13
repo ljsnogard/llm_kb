@@ -12,3 +12,7 @@ abs_cancel = { workspace = true }
 abs_str = { workspace = true }
 anylr = { workspace = true }
 mm_ptr = { workspace = true }
+
+# 临时决策（dev-notes §2.5）：只为纯数据 enum/struct 提供 serde 能力，
+# 具体线上载荷仍由 `kb_rig_llm_v1_adapt` 定义。
+serde = { version = "1.*", default-features = false, features = ["derive"] }

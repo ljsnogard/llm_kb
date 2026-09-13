@@ -1,15 +1,12 @@
-use core::{
-    error,
-    ops::Deref,
-};
+use core::{error, ops::Deref};
 
 use abs_cancel::TrMayCancel;
 use abs_str::string_view::TrStringView;
 use anylr::TrEitherOf;
 
 use crate::v1::cont::{
-    Capabilities, ContentPart, FinishReason, LlmRespEvent, Role,
-    TrMediaSource, TrTextDelta, TrToolCall, TrUsage,
+    Capabilities, ContentPart, FinishReason, LlmRespEvent, Role, TrMediaSource, TrTextDelta,
+    TrToolCall, TrUsage,
 };
 
 /// 一条消息。
@@ -109,9 +106,9 @@ pub trait TrResponseStream {
     type Usage: TrUsage;
 
     type Output: TrEitherOf<
-        Lt = Option< LlmRespEvent<Self::TextDelta, Self::ToolCall, Self::Usage>>,
-        Rt = Self::Err,
-    >;
+            Lt = Option<LlmRespEvent<Self::TextDelta, Self::ToolCall, Self::Usage>>,
+            Rt = Self::Err,
+        >;
     type Err: error::Error;
 
     /// 获取下一个响应事件。
@@ -190,17 +187,11 @@ pub trait TrLlmService {
     /// ChatResponse。
     ///
     /// 对不需要逐步显示回答的调用者，这是最简单的 API。
-    fn ask_async<'f>(
-        &'f self,
-        request: Self::ChatRequest,
-    ) -> Self::AskAsync<'f>;
+    fn ask_async<'f>(&'f self, request: Self::ChatRequest) -> Self::AskAsync<'f>;
 
     /// 发起流式请求。
     ///
     /// 这个函数本身只负责建立请求并取得 stream。
     /// 后续的模型输出通过 `ResponseStream::next()` 增量取得。
-    fn chat_async<'f>(
-        &'f self,
-        request: Self::ChatRequest,
-    ) -> Self::ChatAsync<'f>;
+    fn chat_async<'f>(&'f self, request: Self::ChatRequest) -> Self::ChatAsync<'f>;
 }

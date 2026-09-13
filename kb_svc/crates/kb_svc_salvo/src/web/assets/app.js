@@ -354,6 +354,7 @@
         state.activeTurnId = message.turn_id;
         if (state.active) {
           state.active.state = "streaming";
+          state.active.capabilities = message.capabilities ?? null;
         }
         scheduleRender();
         break;
@@ -366,10 +367,20 @@
           state.turns.push(state.active);
           state.activeTurnId = message.turn_id;
         }
-        if (message.kind === "reasoning") {
-          state.active.reasoning += message.text;
-        } else {
-          state.active.text += message.text;
+        // `logic` 与 abs_llm::v1 的 LogicOutput 一一对应；目前界面只区分
+        // reasoning 与「其余（含 answer / 各类 search call）」两类展示。
+        switch (message.logic) {
+          case "reasoning":
+            state.active.reasoning += message.text;
+            break;
+          case "answer":
+            state.active.text += message.text;
+            break;
+          default:
+            // function_call / dynamic_search_call / static_search_call 等：
+            // 先按正文展示，后续再给它们各自的样式。
+            state.active.text += message.text;
+            break;
         }
         scheduleRender();
         break;
@@ -385,10 +396,11 @@
 
       case "usage": {
         if (state.active) {
+          const usage = message.usage ?? {};
           const parts = [];
-          if (message.input_tokens != null) parts.push(`输入 ${message.input_tokens}`);
-          if (message.output_tokens != null) parts.push(`输出 ${message.output_tokens}`);
-          if (message.total_tokens != null) parts.push(`合计 ${message.total_tokens}`);
+          if (usage.input_tokens != null) parts.push(`输入 ${usage.input_tokens}`);
+          if (usage.output_tokens != null) parts.push(`输出 ${usage.output_tokens}`);
+          if (usage.total_tokens != null) parts.push(`合计 ${usage.total_tokens}`);
           state.active.usage = parts.length ? `token：${parts.join(" / ")}` : "token：未知";
           scheduleRender();
         }
@@ -396,13 +408,14 @@
       }
 
       case "finished": {
+        // 结束原因可能为 null（provider 不一定给），此时不显示额外提示。
         const reasonText = {
           completed: "",
           cancelled: "已取消",
           max_tokens: "达到输出上限",
           tool_call: "等待工具调用",
           other: "已结束",
-        }[message.reason] ?? "已结束";
+        }[message.reason] ?? "";
         finishActive(reasonText);
         break;
       }

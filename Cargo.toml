@@ -6,8 +6,8 @@ members = [
     "kb_svc/crates/kb_core",
     "kb_svc/crates/kb_svc_salvo",
 
-    "kb_plugins/crates/kb_rig_llm_agent",
-    "kb_plugins/crates/kb_rig_llm_adapt",
+    "kb_plugins/crates/kb_rig_llm_v1_adapt",
+    "kb_plugins/crates/kb_rig_llm_v1_agent",
 ]
 
 [workspace.package]
