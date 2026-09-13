@@ -38,9 +38,13 @@ salvo = { version = "0.96.*", default-features = false, features = [
     "http2-cleartext",
     "unix",
     "websocket",
+    "affix-state",
     "test",
     "logging",
 ] }
+serde = { version = "1.*", features = ["derive"] }
+serde_json = { version = "1.*" }
 tokio = { version = "1.*", features = ["rt-multi-thread", "macros", "net", "sync", "time", "process", "signal"] }
+toml_edit = { version = "0.25.*" }
 uuid = { version = "1.*", features = ["v4", "fast-rng"] }
 

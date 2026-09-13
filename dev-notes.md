@@ -264,13 +264,14 @@ kb_svc_salvo/src/
 | 阶段 | 内容 | 状态 |
 | :---: | :--- | :--- |
 | 0 | 确认运行时选型与公开 API 变更；写 UDS + WebSocket 最小 PoC | ✅ 已完成（§13） |
-| 1 | `wire.rs` 协议类型 + 编解码 + 单元测试 | ⏳ 1 天 |
-| 2 | `kb_svc_salvo`：双监听器、`AppState`、`SessionHub`、`/chat` 与 `/plugin` handler | ⏳ 2 天 |
-| 3 | `PluginSupervisor`：spawn / 重启 / 清理 | ⏳ 0.5 天 |
-| 4 | `kb_rig_llm` + rig 适配 crate：UDS 客户端 + `abs_llm::v1` 实现 | ⏳ 2 天 |
-| 5 | 前端页面：布局、样式令牌、增量渲染、取消、重连 | ⏳ 1–2 天 |
+| 1 | `wire.rs` 协议类型 + 编解码 + 单元测试 | ✅ 已完成（§14） |
+| 2 | `kb_svc_salvo`：双监听器、`AppState`、聊天与插件 handler | ✅ 已完成（§14） |
+| 3 | 前端页面：布局、样式令牌、增量渲染、取消、重连 | ✅ 已完成（§14） |
+| 3.5 | 用户配置：LLM 服务选项与 API key 的读写 + 界面配置面板 | ✅ 已完成（§14） |
+| 4 | `PluginSupervisor`：spawn / 重启 / 清理 | ⏳ 0.5 天 |
+| 5 | `kb_rig_llm` + rig 适配 crate：UDS 客户端 + `abs_llm::v1` 实现 | ⏳ 2 天 |
 | 6 | 集成测试与验收 7 条 | ⏳ 1 天 |
-| — | **合计** | **约 7.5–8.5 天** |
+| — | **合计** | **约 3.5 天**（剩余） |
 
 ### 12. 需要批准的事项清单
 
@@ -443,3 +444,126 @@ CARGO_HOME=/tmp/cargo-home cargo test -p kb_svc_salvo
 ```
 
 这属于本机沙箱限制，不是项目配置问题；正常开发机上无需这样处理。
+
+---
+
+## 14. Web 界面与用户配置（已实现）
+
+对应目标里的第二件事：`kb_svc_salvo` 提供一个「极为简单的 html 页面和必要的脚本」，
+用来动态显示 `kb_rig_llm` 上传来的 text delta；同时 `kb_core` 增加用户可配置的
+LLM 服务选项与 API key。
+
+### 14.1 目录与模块落位
+
+前端相关的一切都在 `kb_svc_salvo` 目录内：
+
+```text
+kb_svc/crates/kb_svc_salvo/
+  src/
+    assets.rs         前端资源的内嵌（include_str!）与开发期覆盖
+    web.rs            浏览器侧路由：静态资源、设置 API、聊天 WS
+    web_ws.rs         浏览器连接的事件循环
+    plugin.rs         插件侧路由：/ws/plugin 双向转发
+    hub.rs            会话中枢：转发、turn 状态、广播
+    wire.rs           两段线协议的 JSON 类型
+    settings.rs       LLM 服务选项与 API key 的读写与持久化
+    server.rs         路由表 + 双监听器 + 状态注入
+    poc.rs            临时：PoC 证据留存
+    web/assets/
+      index.html      聊天界面（仿 DSH 观感）
+      app.css         样式表（DSH 令牌体系 + 深浅色）
+      app.js          原生 JS：WebSocket、增量渲染、设置面板
+```
+
+`kb_core` 只增加「编排」职责：读取配置文件、组装服务端、启动时把资源目录与
+状态注入进去。
+
+### 14.2 路由表（公开约定）
+
+| 路由 | 监听器 | 说明 |
+| :--- | :--- | :--- |
+| `GET /` | TCP | 聊天界面 |
+| `GET /app.css`、`GET /app.js` | TCP | 前端资源（`text/css` / `text/javascript`） |
+| `GET /api/settings` | TCP | 读取服务列表与当前生效服务；API key 遮蔽为 `••••••••` |
+| `POST /api/settings/services` | TCP | 新增或覆盖一个服务；回传遮蔽值时保留原 key |
+| `DELETE /api/settings/services/{id}` | TCP | 删除服务；若删的是生效服务则自动切换 |
+| `POST /api/settings/active` | TCP | 切换当前生效服务 |
+| `GET /ws/chat` | TCP | 浏览器事件通道 |
+| `GET /ws/plugin` | UDS（当前 TCP 也可达） | 插件通道 |
+
+**两个监听器共用同一份路由表**（§13.5 的结论），因此上表在所有监听器上都可达。
+这在本机单用户的阶段假设下是可接受的，正式版本需要按监听器区分权限。
+
+### 14.3 线协议（公开约定）
+
+JSON 文本帧，字段与 `abs_llm::v1` 的词汇对齐：
+
+- 浏览器 → 服务端：`ask{turn_id?,question,service_id?}`、`cancel{turn_id}`、`use_service{service_id}`；
+- 服务端 → 浏览器：`ready{plugin_online,services,active_service,server_version}`、
+  `started{turn_id,service_id,model}`、`delta{turn_id,kind,text}`（`kind ∈ answer|reasoning`）、
+  `tool_call{turn_id,id,name,arguments}`、`usage{turn_id,input_tokens?,output_tokens?,total_tokens?}`、
+  `finished{turn_id,reason}`、`error{turn_id?,code,message}`；
+- 服务端 → 插件：`hello`、`ask{turn_id,service_id,service,question}`、`cancel{turn_id}`、`ping`；
+- 插件 → 服务端：`hello`、`started`、`delta`、`tool_call`、`usage`、`finished`、`error`、`pong`。
+
+`delta` 的 `kind` 直接对应 `abs_llm::v1::LogicOutput` 的应用侧子集，
+`finished.reason` 对应 `FinishReason`，`usage` 的字段对应 `TrUsage`。
+
+**服务端不做语义翻译**：插件的 `service` 字段是完整配置（含 API key），
+由插件侧决定怎么用；服务端只负责路由与状态。
+
+### 14.4 用户配置（公开约定）
+
+- 路径：`$XDG_CONFIG_HOME/llm_kb/config.toml`（回退 `~/.config/llm_kb/config.toml`），
+  可用 `kb_core --config <file>` 覆盖；不存在时自动生成带注释的模板。
+- 格式：每个 `[services.<id>]` 一份配置，含 `provider` / `model` / `base_url` / `api_key`。
+- 写回用 `toml_edit` **逐键修改**，保留用户写的注释（有集成测试守住这一点）。
+- **API key 是明文存储的**（当前阶段的安全取舍）；界面上回传时遮蔽，但那只是防肩窥。
+
+### 14.5 前端实现要点
+
+- **零构建工具链**：`include_str!` 内嵌 HTML/CSS/JS；开发期可用
+  `kb_core --assets-dir <dir>` 覆盖文件而不必重新编译。
+- **观感对齐 DSH**：沿用它的两级令牌命名（`--dsw-static-*` → `--dsw-alias-*`）与
+  深色底 `rgb(21,21,23)`；reasoning 折叠行 + 生成中扫光对应 DSH 的 `ReasoningRow`。
+- **只走 DOM API**：所有模型文本都用 `textContent` 写入，不用 `innerHTML` 拼接，
+  因此模型输出无法变成 HTML/脚本。
+- **增量渲染**：`delta` 到达后只改状态，用 `requestAnimationFrame` 合并成每帧一次渲染；
+  正文里的 ``` 围栏代码块切成 `<pre>`，未闭合的围栏按普通文本处理。
+- **多标签一致**：服务端用 `tokio::sync::broadcast` 广播，多个页面同时能看到同一轮输出；
+  订阅落后（`Lagged`）时会收到一条明确提示而不是静默丢内容。
+- **降级路径**：插件不在线时，设置面板仍完整可用（可以先把 key 配好），
+  提问会收到 `plugin_offline` 的明确提示。
+
+### 14.6 实测结果
+
+`cargo test -p kb_svc_salvo -p kb_core` 全绿（39 项）：
+
+| 组 | 数量 | 覆盖 |
+| :--- | :---: | :--- |
+| `hub` 单元测试 | 9 | 转发链路、缺服务/缺 key/插件离线、取消、断线、无关事件、ready |
+| `settings` 单元测试 | 7 | TOML 解析/错误、遮蔽、往返、注释保留、幂等删除 |
+| `wire` 单元测试 | 3 | 帧形状与可选的 `turn_id` |
+| `plugin_socket` 单元测试 | 5 | 路径生成、唯一性、公历换算、幂等清理 |
+| `web` 单元测试 | 2 | 首页 HTML、空设置接口 |
+| `poc_uds_websocket` 集成测试 | 4 | UDS/TCP 上的 WebSocket 与路径约定 |
+| `web_chat_roundtrip` 集成测试 | 4 | 浏览器↔插件端到端转发、设置接口遮蔽明文 key |
+| `kb_core` 单元测试 | 3 | 四个命令行参数 |
+| 文档测试 | 2 | `lib.rs` 与 `settings.rs` 的示例 |
+
+真机跑 `kb_core` 的实际输出（节选）：自动生成配置文件 → 首页 200 + `text/html` →
+`app.css` / `app.js` 的 content-type 正确 → `POST /api/settings/services` 后
+配置文件被写回且**注释保留** → `GET /api/settings` 返回遮蔽后的 key 且
+`active_service` 自动设为该服务 → `SIGTERM` 后 socket 文件被清理。
+
+### 14.7 未完成 / 已知限制
+
+1. **没有真正的 LLM 调用**：`kb_rig_llm` 尚未实现，因此现在提问会得到
+   「插件未连接」的提示；界面的流式渲染路径由集成测试用「假插件」验证。
+2. **没有浏览器端到端测试**：本环境没有可用的 Playwright/浏览器，
+   因此只做了 `node --check` 语法检查 + DOM API 静态审查 + 服务端契约测试。
+   加一条 Playwright 用例应当排进阶段 6。
+3. **无鉴权、无 TLS、TCP 上也能访问 `/ws/plugin`**：符合当前「本机单用户」的阶段假设。
+4. **API key 明文落盘**：见 §14.4。
+5. **不保存对话历史**：刷新页面即清空；历史持久化留到知识库阶段。
+6. **`--assets-dir` 的覆盖只在启动时读取**：改了前端文件需要重新启动进程。

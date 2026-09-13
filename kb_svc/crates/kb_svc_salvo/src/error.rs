@@ -4,11 +4,13 @@ use core::fmt;
 
 /// `kb_svc_salvo` 的统一错误类型。
 ///
-/// PoC 阶段只需要表达「监听器创建/绑定失败」与「服务端运行失败」两类问题；
-/// 正式实现时应按需扩展为更细的变体（线协议错误、子进程错误等）。
+/// 目前只覆盖「I/O / 配置 / 服务端」三类；随着会话与插件监管落地，会按需扩展。
 pub enum KbSvcError {
-    /// 底层 I/O 失败，例如 socket 文件无法创建或监听失败。
+    /// 底层 I/O 失败，例如 socket 文件无法创建、配置文件无法写入。
     Io(std::io::Error),
+
+    /// 配置内容不合法，例如 TOML 解析失败、字段类型不对。
+    Config(String),
 
     /// 服务端运行失败。
     Server(String),
@@ -18,6 +20,7 @@ impl fmt::Debug for KbSvcError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(e) => write!(f, "io error: {e}"),
+            Self::Config(msg) => write!(f, "config error: {msg}"),
             Self::Server(msg) => write!(f, "server error: {msg}"),
         }
     }
@@ -27,16 +30,17 @@ impl fmt::Display for KbSvcError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(e) => write!(f, "io error: {e}"),
+            Self::Config(msg) => write!(f, "config error: {msg}"),
             Self::Server(msg) => write!(f, "server error: {msg}"),
         }
     }
 }
 
-impl std::error::Error for KbSvcError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl core::error::Error for KbSvcError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            Self::Server(_) => None,
+            Self::Config(_) | Self::Server(_) => None,
         }
     }
 }

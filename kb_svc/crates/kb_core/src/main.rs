@@ -6,34 +6,43 @@
 //! WebSocket 路由与会话逻辑；**进程的启动与编排由本 crate 负责**。现阶段两者被
 //! 视为一体，将来再拆分。
 //!
-//! # 本文件当前状态
+//! # 职责
 //!
-//! PoC 阶段：`kb_core` 只负责把 `kb_svc_salvo` 的 PoC 服务端拉起来，用于验证
-//! 「Unix domain socket 上能否跑 WebSocket」。正式实现会替换为完整的启动编排
-//! （配置文件、插件子进程监管、更多路由）。
+//! 1. 解析命令行参数；
+//! 2. 读取（必要时创建）用户配置文件，其中包含 LLM 服务选项与 API key；
+//! 3. 组装 `kb_svc_salvo::server`，绑定 TCP + Unix socket 双监听器；
+//! 4. 处理好关停：收到 `SIGINT` / `SIGTERM` 时清理 socket 文件。
+//!
+//! 插件子进程的拉起在下一个阶段实现（见 `dev-notes.md` §11）。
 //!
 //! # 用法
 //!
 //! ```text
-//! kb_core [--runtime-dir <dir>] [tcp_addr]
+//! kb_core [--config <file>] [--runtime-dir <dir>] [--assets-dir <dir>] [tcp_addr]
 //! ```
 //!
 //! - `tcp_addr`：用户侧 HTTP 监听地址，缺省 `127.0.0.1:8788`；端口写 `0` 表示由系统分配。
-//! - `--runtime-dir`：存放插件通道 socket 的目录，缺省 `$XDG_RUNTIME_DIR/llm_kb`。
+//! - `--config`：配置文件路径，缺省 `$XDG_CONFIG_HOME/llm_kb/config.toml`。
+//! - `--runtime-dir`：插件通道 socket 的存放目录，缺省 `$XDG_RUNTIME_DIR/llm_kb`。
+//! - `--assets-dir`：前端资源覆盖目录（开发期用），缺省使用编译期内嵌资源。
 //!
 //! 注意：socket **文件名不接受指定**，由 `kb_svc_salvo` 在启动时按「日期 + UUID」
 //! 生成；`kb_core` 拿到该路径后负责把它交给插件子进程。
-//!
-//! 收到 `Ctrl-C`（`SIGINT`）或 `SIGTERM` 时，本进程会走优雅退出路径，
-//! 删除本次生成的 socket 文件后再退出（见 [`shutdown_signal`]）。
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use kb_svc_salvo::poc::{PocConfig, bind};
-use log::info;
+use kb_svc_salvo::{
+    hub::AppState,
+    server::{ServerConfig, bind},
+    settings::SettingsStore,
+};
+use log::{info, warn};
 
-/// PoC 默认使用的 HTTP 监听地址。
+/// 默认使用的 HTTP 监听地址。
 const DEFAULT_TCP_ADDR: &str = "127.0.0.1:8788";
+
+/// 关停时等待服务端退出的时间。
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 
 /// `kb_core` 的命令行参数。
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -41,8 +50,14 @@ struct Args {
     /// 用户侧 HTTP 监听地址。
     tcp_addr: Option<String>,
 
-    /// 运行时目录；`None` 表示使用 `kb_svc_salvo` 的默认值。
+    /// 配置文件路径。
+    config_path: Option<PathBuf>,
+
+    /// 运行时目录。
     runtime_dir: Option<PathBuf>,
+
+    /// 前端资源覆盖目录。
+    assets_dir: Option<PathBuf>,
 }
 
 /// 解析命令行参数。
@@ -57,16 +72,22 @@ where
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--runtime-dir" => match iter.next() {
-                Some(dir) => args.runtime_dir = Some(PathBuf::from(dir)),
-                None => log::warn!("--runtime-dir 缺少取值，已忽略"),
+            "--config" => match iter.next() {
+                Some(value) => args.config_path = Some(PathBuf::from(value)),
+                None => warn!("--config 缺少取值，已忽略"),
             },
-            other if other.starts_with('-') => {
-                log::warn!("忽略未知参数: {other}");
-            }
+            "--runtime-dir" => match iter.next() {
+                Some(value) => args.runtime_dir = Some(PathBuf::from(value)),
+                None => warn!("--runtime-dir 缺少取值，已忽略"),
+            },
+            "--assets-dir" => match iter.next() {
+                Some(value) => args.assets_dir = Some(PathBuf::from(value)),
+                None => warn!("--assets-dir 缺少取值，已忽略"),
+            },
+            other if other.starts_with('-') => warn!("忽略未知参数: {other}"),
             addr => {
                 if args.tcp_addr.is_some() {
-                    log::warn!("重复的监听地址参数，已忽略: {addr}");
+                    warn!("重复的监听地址参数，已忽略: {addr}");
                 } else {
                     args.tcp_addr = Some(addr.to_string());
                 }
@@ -89,7 +110,7 @@ async fn shutdown_signal() {
         let mut interrupt = match signal(SignalKind::interrupt()) {
             Ok(stream) => stream,
             Err(err) => {
-                log::warn!("无法监听 SIGINT，仅等待退出信号: {err}");
+                warn!("无法监听 SIGINT，退回仅等待 Ctrl-C: {err}");
                 let _ = tokio::signal::ctrl_c().await;
                 return;
             }
@@ -98,7 +119,7 @@ async fn shutdown_signal() {
         let mut terminate = match signal(SignalKind::terminate()) {
             Ok(stream) => stream,
             Err(err) => {
-                log::warn!("无法监听 SIGTERM，仅等待 SIGINT: {err}");
+                warn!("无法监听 SIGTERM，仅等待 SIGINT: {err}");
                 interrupt.recv().await;
                 return;
             }
@@ -123,22 +144,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = parse_args(std::env::args().skip(1));
 
-    let mut config = PocConfig::new(
+    // ── 用户配置 ───────────────────────────────────────────────────
+    let config_path = args
+        .config_path
+        .clone()
+        .unwrap_or_else(SettingsStore::default_config_path);
+
+    let store = SettingsStore::file(&config_path);
+    store.ensure_exists().await?;
+    info!("用户配置: {}", config_path.display());
+
+    let settings = store.load().await?;
+    if settings.services.is_empty() {
+        info!("尚未配置任何 LLM 服务，可在网页右上角「设置」里添加");
+    } else {
+        for (id, service) in &settings.services {
+            info!(
+                "服务 {id}: provider={} model={} api_key={}",
+                service.provider,
+                service.model,
+                if service.has_api_key() {
+                    "已配置"
+                } else {
+                    "缺失"
+                }
+            );
+        }
+    }
+
+    // ── 服务端 ─────────────────────────────────────────────────────
+    let state = Arc::new(AppState::new(store).await);
+
+    let mut server_config = ServerConfig::new(
         args.tcp_addr
             .clone()
             .unwrap_or_else(|| DEFAULT_TCP_ADDR.to_string()),
     );
 
-    if let Some(runtime_dir) = args.runtime_dir.clone() {
-        config = config.with_runtime_dir(runtime_dir);
+    if let Some(dir) = args.runtime_dir.clone() {
+        server_config = server_config.with_runtime_dir(dir);
+    }
+    if let Some(dir) = args.assets_dir.clone() {
+        server_config = server_config.with_assets_dir(dir);
     }
 
-    let mut bound = bind(&config).await?;
+    let mut bound = bind(&server_config).await?;
 
-    info!("kb_core listening: tcp={}", bound.tcp_addr);
-    info!("kb_core plugin socket: {}", bound.socket_path().display());
+    info!("用户界面: http://{}", bound.tcp_addr);
+    info!("插件通道: {}", bound.socket_path().display());
 
-    // TODO(阶段 3)：在此处启动插件子进程，并把 `bound.socket_path()` 通过
+    // TODO(阶段 3)：在此处启动 kb_rig_llm 子进程，并把 `bound.socket_path()` 通过
     // `--socket <path>` 与 `LLM_KB_PLUGIN_SOCKET` 两种方式传给子进程。
 
     // 先把 socket 文件的清理守卫拿到 `main` 的作用域里：服务端任务可能在关停时被
@@ -148,22 +203,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("socket 清理守卫缺失，拒绝继续启动")?;
 
     let serve_task = tokio::spawn(async move {
-        bound.serve().await;
+        bound.serve(state).await;
     });
 
     shutdown_signal().await;
 
-    // 给服务端一点时间自然退出；超时后直接中止任务。
-    match tokio::time::timeout(std::time::Duration::from_secs(3), serve_task).await {
+    match tokio::time::timeout(SHUTDOWN_GRACE, serve_task).await {
         Ok(Ok(())) => info!("服务端已正常退出"),
-        Ok(Err(err)) => log::warn!("服务端任务异常结束: {err}"),
-        Err(_) => log::warn!("服务端未在 3 秒内退出，已放弃等待"),
+        Ok(Err(err)) => warn!("服务端任务异常结束: {err}"),
+        Err(_) => warn!("服务端未在 {SHUTDOWN_GRACE:?} 内退出，已放弃等待"),
     }
 
-    // 显式删除 socket 文件，并给出可观测的结果。
     match socket_guard.remove() {
         Ok(()) => info!("已清理 socket 文件: {}", socket_guard.path().display()),
-        Err(err) => log::warn!(
+        Err(err) => warn!(
             "清理 socket 文件失败 {}: {err}",
             socket_guard.path().display()
         ),
@@ -176,32 +229,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
 
-    /// 测试参数解析正确识别监听地址与运行时目录。
+    /// 测试参数解析正确识别全部四个选项。
     ///
     /// - 手段：把一组参数以 `String` 迭代器的形式传给 `parse_args`，顺序打乱以验证
     ///   解析与顺序无关。
-    /// - 判断：返回的 `Args` 中 `tcp_addr` 与 `runtime_dir` 与预期完全相等。
+    /// - 判断：返回的 `Args` 与预期完全相等。
     #[test]
-    fn parse_args_reads_addr_and_runtime_dir() {
+    fn parse_args_reads_all_options() {
         let args = parse_args(
-            ["--runtime-dir", "/run/kb", "127.0.0.1:9999"]
-                .into_iter()
-                .map(String::from),
+            [
+                "--assets-dir",
+                "/tmp/assets",
+                "127.0.0.1:9999",
+                "--config",
+                "/tmp/kb.toml",
+                "--runtime-dir",
+                "/run/kb",
+            ]
+            .into_iter()
+            .map(String::from),
         );
 
         assert_eq!(
             args,
             Args {
                 tcp_addr: Some("127.0.0.1:9999".to_string()),
+                config_path: Some(PathBuf::from("/tmp/kb.toml")),
                 runtime_dir: Some(PathBuf::from("/run/kb")),
+                assets_dir: Some(PathBuf::from("/tmp/assets")),
             }
         );
     }
 
-    /// 测试缺省参数时两个字段都为空，由调用方补默认值。
+    /// 测试缺省参数时四个字段都为空，由调用方补默认值。
     ///
     /// - 手段：传入空参数列表。
-    /// - 判断：`Args` 等于 `Default`，即仍使用代码内定义的默认监听地址与默认目录。
+    /// - 判断：`Args` 等于 `Default`。
     #[test]
     fn parse_args_defaults_to_empty() {
         assert_eq!(parse_args(std::iter::empty()), Args::default());
@@ -209,12 +272,12 @@ mod tests {
 
     /// 测试未知参数与重复地址不会破坏解析结果。
     ///
-    /// - 手段：传入一个未知开关、一次重复的监听地址，以及 `--runtime-dir` 缺少取值。
-    /// - 判断：第一个监听地址被保留，运行时目录保持为 `None`，解析过程不 panic。
+    /// - 手段：传入一个未知开关、两次重复的监听地址，以及缺少取值的 `--config`。
+    /// - 判断：第一个监听地址被保留，`config_path` 保持为 `None`，解析过程不 panic。
     #[test]
     fn parse_args_tolerates_unknown_and_duplicate() {
         let args = parse_args(
-            ["--nope", "127.0.0.1:1", "127.0.0.1:2", "--runtime-dir"]
+            ["--nope", "127.0.0.1:1", "127.0.0.1:2", "--config"]
                 .into_iter()
                 .map(String::from),
         );
@@ -223,7 +286,9 @@ mod tests {
             args,
             Args {
                 tcp_addr: Some("127.0.0.1:1".to_string()),
+                config_path: None,
                 runtime_dir: None,
+                assets_dir: None,
             }
         );
     }

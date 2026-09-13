@@ -10,7 +10,7 @@ use std::{path::PathBuf, sync::OnceLock, time::Duration};
 use futures_util::{SinkExt, StreamExt};
 use kb_svc_salvo::{
     plugin_socket,
-    poc::{PocConfig, bind},
+    poc::{FixtureConfig, bind_echo_fixture},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -50,9 +50,11 @@ impl TestServer {
         let runtime_dir =
             std::env::temp_dir().join(format!("kb-svc-salvo-poc-{}-{name}", std::process::id()));
 
-        let config = PocConfig::new("127.0.0.1:0").with_runtime_dir(runtime_dir.clone());
+        let config = FixtureConfig::new("127.0.0.1:0").with_runtime_dir(runtime_dir.clone());
 
-        let bound = bind(&config).await.expect("PoC 服务端应当成功绑定监听器");
+        let bound = bind_echo_fixture(&config)
+            .await
+            .expect("PoC 服务端应当成功绑定监听器");
         let tcp_addr = bound.tcp_addr;
         let socket_path = bound.socket_path().to_path_buf();
 
