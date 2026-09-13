@@ -4,3 +4,9 @@ name = "kb_core"
 version = "0.1.0"
 
 description = "The core process of KnowledgeBase service."
+
+[dependencies]
+env_logger = { workspace = true }
+kb_svc_salvo = { path = "../kb_svc_salvo" }
+log = { workspace = true }
+tokio = { workspace = true }

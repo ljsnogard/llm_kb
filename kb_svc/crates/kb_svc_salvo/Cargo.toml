@@ -4,3 +4,13 @@ name = "kb_svc_salvo"
 version = "0.1.0"
 
 description = "Implement KB Service with Salvo"
+
+[dependencies]
+log = { workspace = true }
+salvo = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+futures-util = { version = "0.3.*", default-features = false, features = ["sink"] }
+tokio-tungstenite = { version = "0.28.*", features = ["connect", "handshake"] }
