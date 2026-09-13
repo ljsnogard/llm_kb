@@ -1,0 +1,11 @@
+# 测试运行配置。
+#
+# `golden` 标签下的视觉基线依赖本机安装的中文字体（Source Han Sans SC），
+# 换台机器渲染出的像素就会不同，因此默认跳过。需要生成或查看基线时显式运行：
+#
+# ```bash
+# flutter test --run-skipped --tags golden --update-goldens test/golden
+# ```
+tags:
+  golden:
+    skip: "视觉基线依赖本机字体，默认跳过；见本文件顶部说明。"

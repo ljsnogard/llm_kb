@@ -1,3 +1,15 @@
+# 客户端自带的 Rust 侧（flutter_rust_bridge 生成的原生库）。
+#
+# 这里显式声明一个空的 `[workspace]`，让它成为独立的 workspace 根：
+# 本目录位于仓库根 `Cargo.toml` 的 workspace 目录树之内，却没有（也不应该）
+# 被列为成员——不声明的话 cargo 会报
+# 「current package believes it's in a workspace when it's not」，
+# 导致 `flutter build linux` 失败。
+#
+# 客户端与知识库服务端的依赖完全不同（只需要 flutter_rust_bridge），
+# 因此独立成根比加进服务端 workspace 更干净。
+[workspace]
+
 [package]
 name = "rust_lib_kb_admin_desktop"
 version = "0.1.0"

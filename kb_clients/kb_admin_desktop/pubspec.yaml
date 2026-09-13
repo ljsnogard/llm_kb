@@ -34,6 +34,12 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+
+  # 本地持久化：把用户在设置面板里填写的 LLM 服务与 API key 存到平台的应用
+  # 配置目录，重启后仍然有效。（与 `kb_svc_salvo` 把配置写在服务端不同，
+  # 桌面客户端把「连接参数」放在自己这边。）
+  shared_preferences: ^2.5.3
+
   rust_lib_kb_admin_desktop:
     path: rust_builder
   flutter_rust_bridge: 2.13.0

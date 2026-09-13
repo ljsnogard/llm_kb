@@ -1,0 +1,32 @@
+# flutter_rust_bridge 子项目（`rust/`）专用的 Cargokit 配置。
+#
+# # 为什么需要这个文件
+#
+# 仓库根的 `rust-toolchain.toml` 把整个项目锁到 nightly，但 Cargokit **看不到**
+# 它：Cargokit 固定用 `rustup run <通道> cargo build` 调用（见
+# `../rust_builder/cargokit/build_tool/lib/src/builder.dart`），而 `rustup run`
+# 会给子进程设 `RUSTUP_TOOLCHAIN`、覆盖同目录树里的 `rust-toolchain.toml`。
+# 不配置的话它走默认值 `stable`，于是本机全局 `~/.cargo/config.toml` 里的
+# nightly-only 参数（`-Zpolonius=next`）会让构建直接失败：
+#
+#     error: the option `Z` is only accepted on the nightly compiler
+#
+# 这里把三种构建配置都显式指向 nightly，跟根目录的 `rust-toolchain.toml` 对齐。
+#
+# # 为什么三个配置都要写
+#
+# Cargokit 按 `BuildConfiguration`（debug / release / profile）查表，查不到就
+# 回落到 `stable`；只写 debug 的话 `flutter build linux --release` 依旧会挂。
+#
+# # 已知限制
+#
+# Cargokit 的 `enum Toolchain` 只有 `stable` / `beta` / `nightly` 三个值，写不了
+# `nightly-YYYY-MM-DD`。因此这里只能按通道对齐；等它支持任意通道名之后，本文件
+# 与根目录的 `rust-toolchain.toml` 可以一起改成带日期的写法。
+cargo:
+  debug:
+    toolchain: nightly
+  release:
+    toolchain: nightly
+  profile:
+    toolchain: nightly

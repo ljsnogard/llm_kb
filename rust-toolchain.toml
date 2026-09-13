@@ -1,0 +1,32 @@
+# llm_kb 的项目级工具链锁定。
+#
+# 放在仓库根，rustup 会从任意子目录向上找到它；`kb_clients/kb_admin_desktop/rust`
+# （客户端自带的 Rust 侧）也在它的覆盖范围内。
+#
+# # 为什么是 nightly
+#
+# `abs_llm` 用了 nightly 特性 `#![feature(try_trait_v2)]`
+# （见 `kb_svc/crates/abs_llm/src/lib.rs`），stable 编译不过。
+#
+# # 为什么按通道锁定、而不是按日期锁定
+#
+# 客户端那边的 flutter_rust_bridge 构建工具 Cargokit 只认
+# `stable` / `beta` / `nightly` 三个通道名（见
+# `kb_clients/kb_admin_desktop/rust_builder/cargokit` 的 `enum Toolchain`），
+# 写不出 `nightly-YYYY-MM-DD` 这样的日期化通道；而它内部是用
+# `rustup run <通道> cargo build` 调用的，`rustup run` 会覆盖本文件。
+# 因此两边统一按通道锁定：本文件与
+# `kb_clients/kb_admin_desktop/rust/cargokit.yaml` 都写 `nightly`。
+#
+# 代价是 nightly 会随时间漂移。若将来 Cargokit 支持任意通道名，或客户端
+# 不再需要 frb，可以改成 `nightly-YYYY-MM-DD` 以获得可复现的构建。
+#
+# 注意：本文件只决定 **用哪个 rustc**，不决定 rustflags。个人全局
+# `~/.cargo/config.toml` 里的 nightly-only 参数（例如 `-Zpolonius=next`）
+# 会照旧生效——这也正是必须锁到 nightly 的原因之一。
+[toolchain]
+channel = "nightly"
+
+# AGENTS.md 第 6 条要求提交前跑 `cargo fmt` 与 `cargo clippy`，因此把这两个组件
+# 一并声明，保证任何机器上 `rustup` 都会为这条通道准备好它们。
+components = ["rustfmt", "clippy"]

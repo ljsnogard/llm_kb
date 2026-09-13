@@ -37,3 +37,13 @@
 | 子项目 | 描述 |
 | :--- | :--- |
 | `kb_admin_desktop` | 全功能的知识库编辑、管理，桌面客户端。|
+
+## 构建环境
+
+工具链由仓库根的 `rust-toolchain.toml` 锁定为 **nightly**：`abs_llm` 使用了
+`#![feature(try_trait_v2)]`（见 `kb_svc/crates/abs_llm/src/lib.rs`），stable 编译不过。
+`rustup` 会自动按该文件准备工具链与 `rustfmt` / `clippy` 组件，无需手工 `rustup default`。
+
+客户端 `kb_admin_desktop` 里的 flutter_rust_bridge 子项目由 Cargokit 驱动，
+它不会读取 `rust-toolchain.toml`（`rustup run` 会覆盖工具链文件），因此另有一份
+`kb_clients/kb_admin_desktop/rust/cargokit.yaml` 把工具链对齐到同一条通道。
