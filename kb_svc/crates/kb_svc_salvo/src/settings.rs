@@ -42,6 +42,19 @@ const CONFIG_FILE_NAME: &str = "config.toml";
 /// 遮蔽后的 API key 呈现形式。
 pub const MASKED_KEY: &str = "••••••••";
 
+/// 默认配置文件路径。
+///
+/// 优先 `$XDG_CONFIG_HOME/llm_kb/config.toml`，其次 `~/.config/llm_kb/config.toml`，
+/// 两者都不可用时回退到当前目录下的 `llm_kb/config.toml`。
+pub fn default_config_path() -> PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    base.join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME)
+}
+
 /// 一份 LLM 服务的配置。
 ///
 /// 字段刻意保持最小：只包含「连到哪个服务、用哪个模型、用什么凭据」。
@@ -229,19 +242,6 @@ impl SettingsStore {
         Self::Memory(std::sync::Arc::new(tokio::sync::RwLock::new(
             Settings::default(),
         )))
-    }
-
-    /// 默认配置文件路径。
-    ///
-    /// 优先 `$XDG_CONFIG_HOME/llm_kb/config.toml`，其次 `~/.config/llm_kb/config.toml`，
-    /// 两者都不可用时回退到当前目录下的 `llm_kb/config.toml`。
-    pub fn default_config_path() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-            .unwrap_or_else(|| PathBuf::from("."));
-
-        base.join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME)
     }
 
     /// 返回底层文件路径（内存存储时返回 `None`）。

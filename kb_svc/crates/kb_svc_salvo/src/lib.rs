@@ -8,6 +8,7 @@
 //!
 //! | 模块 | 职责 |
 //! | :--- | :--- |
+//! | [`launch`] | 启动编排：配置加载、监听绑定、优雅退出与资源清理（`kb_core` 的唯一入口） |
 //! | [`server`] | 组装路由表、绑定 TCP + Unix socket 双监听器、注入共享状态 |
 //! | [`web`] | 浏览器侧路由：静态资源、设置 API、聊天 WebSocket |
 //! | [`web_ws`] | 浏览器连接的事件循环 |
@@ -43,6 +44,7 @@
 pub mod assets;
 pub mod error;
 pub mod hub;
+pub mod launch;
 pub mod plugin;
 pub mod plugin_socket;
 pub mod poc;

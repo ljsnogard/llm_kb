@@ -11,6 +11,19 @@
 //! （当前无实际用途，但省去了「两套路由容易走偏」的维护成本）；反过来浏览器
 //! 若通过 TCP 访问 `/ws/plugin` 也会被接受，这与当前「本机单用户、不设防」的
 //! 阶段假设一致，正式版本需要按监听器区分权限。
+//!
+//! # 为什么可以用 `JoinedListener`
+//!
+//! 「UDS 上能否跑 WebSocket」曾经是本项目最大的未知数，最小验证见 [`crate::poc`]
+//! 与集成测试 `tests/poc_uds_websocket.rs`：结论是**可以**——Salvo 的 WebSocket
+//! 升级只依赖 HTTP/1.1 的 `Upgrade` 机制，与底层传输类型无关。因此这里的两个
+//! 监听器可以直接合并，共享同一套 handler 与状态，不需要为插件通道单独写一套协议。
+//!
+//! # 监听地址与权限
+//!
+//! - TCP 侧默认只绑 `127.0.0.1`（见 [`DEFAULT_TCP_ADDR`]），不对外网暴露；
+//! - UDS 侧由 [`crate::plugin_socket`] 生成「日期 + UUID」文件名，并把目录收紧到
+//!   `0700`、socket 文件收紧到 `0600`。
 
 use std::sync::Arc;
 
@@ -29,6 +42,9 @@ use crate::{
     hub::AppState,
     plugin_socket::{self, SocketFileGuard},
 };
+
+/// 用户侧 TCP 监听地址的默认值。
+pub const DEFAULT_TCP_ADDR: &str = "127.0.0.1:8788";
 
 /// 服务端启动所需的配置。
 #[derive(Debug, Clone)]
@@ -124,6 +140,9 @@ impl BoundServer {
 }
 
 /// 生成 socket 路径、绑定两个监听器，并完成资源设置。
+///
+/// 之所以是 `async`：Salvo 的 `Listener::bind` 本身是异步的（它要把监听器注册进
+/// 运行时的 reactor）。
 pub async fn bind(config: &ServerConfig) -> KbSvcResult<BoundServer> {
     let runtime_dir = config
         .runtime_dir

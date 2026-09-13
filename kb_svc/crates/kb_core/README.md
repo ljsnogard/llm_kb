@@ -143,7 +143,7 @@ ls -la "${XDG_CONFIG_HOME:-$HOME/.config}/llm_kb/"
 ```
 
 预期：存在 `config.toml`，内容是一份带注释的模板（含 `[services.deepseek]`）。
-用 `--config /tmp/kb-demo/config.toml` 启动时到该路径下找。
+用 `--config /tmp/kb-demo/config.toml` 启动时，模板会写到 `/tmp/kb-demo/config.toml`。
 
 ### 4.3 设置接口：写入服务并遮蔽 API key
 
@@ -176,27 +176,32 @@ grep -c '^#' "${XDG_CONFIG_HOME:-$HOME/.config}/llm_kb/config.toml"   # 预期 >
 
 ```bash
 rm -rf /tmp/kb-run
-timeout -s TERM 3 cargo run -p kb_core -- --runtime-dir /tmp/kb-run 127.0.0.1:8788
-ls -A /tmp/kb-run/    # 预期：没有任何输出
+timeout -s TERM 3 cargo run -p kb_core -- \
+  --config /tmp/kb-run/config.toml --runtime-dir /tmp/kb-run 127.0.0.1:8788
+ls -A /tmp/kb-run/    # 预期：只剩 config.toml，没有 .sock
 ```
 
 预期日志：
 
 ```text
-[<时间戳> INFO  kb_core] 收到 SIGTERM，开始优雅退出
-[<时间戳> WARN  kb_core] 服务端未在 3s 内退出，已放弃等待
-[<时间戳> INFO  kb_core] 已清理 socket 文件: /tmp/kb-run/kb-<日期>-<uuid>.sock
+[<时间戳> INFO  kb_svc_salvo::launch] 收到 SIGTERM，开始优雅退出
+[<时间戳> WARN  kb_svc_salvo::launch] 服务端未在 3s 内退出，已放弃等待
+[<时间戳> INFO  kb_svc_salvo::launch] 已清理 socket 文件: /tmp/kb-run/kb-<日期>-<uuid>.sock
 ```
 
 交互式终端里按 `Ctrl-C`（`SIGINT`）走同一条路径。
 
+> 这里必须显式给 `--config`：不给的话会用默认路径 `~/.config/llm_kb/config.toml`，
+> 而首次启动需要在那个目录下建文件。`kb_core` 不会为「配置文件建不出来」做特殊降级，
+> 它会把 I/O 错误原样报出来（例如只读 HOME 下会看到 `io error: Read-only file system`）。
+
 ### 4.6 自动化验证（推荐）
 
 ```bash
-cargo test -p kb_svc_salvo -p kb_core
+cargo test --workspace
 ```
 
-预期共 39 项全部 `ok`，其中与界面/配置直接相关的是：
+预期共 43 项全部 `ok`，其中与界面/配置直接相关的是：
 
 ```text
 test browser_question_reaches_plugin_and_answers_stream_back ... ok   # 提问→插件→增量回浏览器
@@ -219,8 +224,8 @@ test file_store_upsert_keeps_comments ... ok                         # 写配置
 | `GET /api/settings` | 读取设置 | key 显示为 `••••••••`，含 `has_api_key` |
 | ⚙ 面板里改 key / 切换服务 | 界面配置能力 | 列表与下拉框即时更新，配置落盘 |
 | 无插件时发送问题 | 降级路径 | 提示「LLM 插件当前未连接」 |
-| `cargo test -p kb_svc_salvo -p kb_core` | 全部契约 | 39 项 `ok` |
-| `timeout -s TERM 3 cargo run ...` | 关停清理 | `已清理 socket 文件`，目录为空 |
+| `cargo test --workspace` | 全部契约 | 43 项 `ok` |
+| `timeout -s TERM 3 cargo run ...` | 关停清理 | `已清理 socket 文件`，目录里只剩 `config.toml` |
 
 ## 6. 下一阶段（尚未实现）
 
@@ -232,8 +237,13 @@ test file_store_upsert_keeps_comments ... ok                         # 写配置
 3. **`ServerHandle::stop_graceful`**：把当前「等 3 秒或 abort」换成真正的优雅关停；
 4. **浏览器端到端测试**：补一条 Playwright 用例覆盖界面的流式渲染与设置面板。
 
+分工上：`kb_core` 只负责「解析参数 + 初始化日志 + 调用 `launch`」，
+启动编排（配置加载、监听绑定、优雅退出、socket 清理）都在
+`kb_svc_salvo::launch` 里。
+
 ## 7. 相关文档
 
-- `dev-notes.md` §8 配置与启动约定、§13 已确认的决策与 PoC、§14 Web 界面与用户配置；
+- `dev-notes.md`：进度、尚未决策的事项、剩余工作；
+- `kb_svc/crates/kb_svc_salvo/src/launch.rs`：启动编排、信号处理与资源清理的实现与说明；
 - `kb_svc/crates/kb_svc_salvo/src/web/assets/`：前端三件套（HTML / CSS / JS）；
 - `kb_svc/crates/kb_svc_salvo/src/plugin_socket.rs`：socket 路径生成与清理的实现与测试。

@@ -1,0 +1,9 @@
+[package]
+edition = "2024"
+name = "kb_rig_llm_adapt"
+version = "0.1.0"
+
+description = "Conversion logics between `Rig` types to `abs_llm` types."
+
+[dependencies]
+abs_llm = { path = "../../kb_svc/crates/abs_llm" }

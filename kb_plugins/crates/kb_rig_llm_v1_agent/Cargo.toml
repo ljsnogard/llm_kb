@@ -1,0 +1,21 @@
+[package]
+edition = "2024"
+name = "kb_rig_llm_agent"
+version = "0.1.0"
+
+description = "kb LLM plugins to interact with LLM services."
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+futures = "0.3"
+rig = "0.41"
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "rustls",
+    "socks",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+toml = "0.9"

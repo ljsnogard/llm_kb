@@ -5,8 +5,9 @@ version = "0.1.0"
 
 description = "The core process of KnowledgeBase service."
 
+# 只属于本 crate 的依赖直接写在这里；只有跨成员共用的依赖才放 workspace。
 [dependencies]
-env_logger = { workspace = true }
+env_logger = { version = "0.11.*" }
 kb_svc_salvo = { path = "../kb_svc_salvo" }
 log = { workspace = true }
 tokio = { workspace = true }

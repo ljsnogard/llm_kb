@@ -5,14 +5,26 @@ version = "0.1.0"
 
 description = "Implement KB Service with Salvo"
 
+# 只属于本 crate 的依赖直接写在这里；只有跨成员共用的依赖才放 workspace。
 [dependencies]
 log = { workspace = true }
-salvo = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
+salvo = { version = "0.96.*", default-features = false, features = [
+    "server",
+    "server-handle",
+    "http1",
+    "http2",
+    "http2-cleartext",
+    "unix",
+    "websocket",
+    "affix-state",
+    "test",
+    "logging",
+] }
+serde = { version = "1.*", features = ["derive"] }
+serde_json = { version = "1.*" }
 tokio = { workspace = true }
-toml_edit = { workspace = true }
-uuid = { workspace = true }
+toml_edit = { version = "0.25.*" }
+uuid = { version = "1.*", features = ["v4", "fast-rng"] }
 
 [dev-dependencies]
 futures-util = { version = "0.3.*", default-features = false, features = ["sink"] }

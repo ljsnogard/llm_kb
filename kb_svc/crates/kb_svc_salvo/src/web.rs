@@ -15,12 +15,7 @@
 
 use std::sync::Arc;
 
-use salvo::{
-    Depot, Request, Response, Router,
-    http::StatusCode,
-    prelude::*,
-    writing::Text,
-};
+use salvo::{Depot, Request, Response, Router, http::StatusCode, prelude::*, writing::Text};
 
 use crate::{
     assets::AssetSettings,

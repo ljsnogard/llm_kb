@@ -1,19 +1,16 @@
 //! # kb_core
 //!
-//! 知识库的主进程入口。
+//! 知识库主进程的可执行入口。
 //!
-//! 依据 `dev-notes.md` 的决策（§13.1）：`kb_svc_salvo` 保持为纯库，负责 HTTP /
-//! WebSocket 路由与会话逻辑；**进程的启动与编排由本 crate 负责**。现阶段两者被
-//! 视为一体，将来再拆分。
-//!
-//! # 职责
+//! 本 crate 只做三件事：
 //!
 //! 1. 解析命令行参数；
-//! 2. 读取（必要时创建）用户配置文件，其中包含 LLM 服务选项与 API key；
-//! 3. 组装 `kb_svc_salvo::server`，绑定 TCP + Unix socket 双监听器；
-//! 4. 处理好关停：收到 `SIGINT` / `SIGTERM` 时清理 socket 文件。
+//! 2. 初始化日志；
+//! 3. 调用 [`kb_svc_salvo::launch::launch`]，把参数原样交给它。
 //!
-//! 插件子进程的拉起在下一个阶段实现（见 `dev-notes.md` §11）。
+//! **其余一切**——配置文件的读取与生成、监听绑定、socket 文件的生成与清理、
+//! 信号处理与优雅退出——都由 `kb_svc_salvo` 负责，见
+//! `kb_svc/crates/kb_svc_salvo/src/launch.rs` 的模块文档。
 //!
 //! # 用法
 //!
@@ -26,38 +23,28 @@
 //! - `--runtime-dir`：插件通道 socket 的存放目录，缺省 `$XDG_RUNTIME_DIR/llm_kb`。
 //! - `--assets-dir`：前端资源覆盖目录（开发期用），缺省使用编译期内嵌资源。
 //!
-//! 注意：socket **文件名不接受指定**，由 `kb_svc_salvo` 在启动时按「日期 + UUID」
-//! 生成；`kb_core` 拿到该路径后负责把它交给插件子进程。
+//! 更完整的操作手册见本 crate 的 `README.md`。
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use kb_svc_salvo::launch::{LaunchConfig, launch};
+use log::warn;
 
-use kb_svc_salvo::{
-    hub::AppState,
-    server::{ServerConfig, bind},
-    settings::SettingsStore,
-};
-use log::{info, warn};
-
-/// 默认使用的 HTTP 监听地址。
-const DEFAULT_TCP_ADDR: &str = "127.0.0.1:8788";
-
-/// 关停时等待服务端退出的时间。
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
-
-/// `kb_core` 的命令行参数。
+/// 被覆盖的启动参数。
+///
+/// 字段都是 `Option`：`None` 表示「用 `kb_svc_salvo` 的默认值」，本 crate 不重复
+/// 定义这些默认值，避免两处默认值随时间漂移。
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Args {
-    /// 用户侧 HTTP 监听地址。
+    /// 用户侧监听地址。
     tcp_addr: Option<String>,
 
     /// 配置文件路径。
-    config_path: Option<PathBuf>,
+    config_path: Option<std::path::PathBuf>,
 
     /// 运行时目录。
-    runtime_dir: Option<PathBuf>,
+    runtime_dir: Option<std::path::PathBuf>,
 
     /// 前端资源覆盖目录。
-    assets_dir: Option<PathBuf>,
+    assets_dir: Option<std::path::PathBuf>,
 }
 
 /// 解析命令行参数。
@@ -73,15 +60,15 @@ where
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--config" => match iter.next() {
-                Some(value) => args.config_path = Some(PathBuf::from(value)),
+                Some(value) => args.config_path = Some(value.into()),
                 None => warn!("--config 缺少取值，已忽略"),
             },
             "--runtime-dir" => match iter.next() {
-                Some(value) => args.runtime_dir = Some(PathBuf::from(value)),
+                Some(value) => args.runtime_dir = Some(value.into()),
                 None => warn!("--runtime-dir 缺少取值，已忽略"),
             },
             "--assets-dir" => match iter.next() {
-                Some(value) => args.assets_dir = Some(PathBuf::from(value)),
+                Some(value) => args.assets_dir = Some(value.into()),
                 None => warn!("--assets-dir 缺少取值，已忽略"),
             },
             other if other.starts_with('-') => warn!("忽略未知参数: {other}"),
@@ -98,129 +85,33 @@ where
     args
 }
 
-/// 等待进程收到 `SIGINT` / `SIGTERM`。
-///
-/// 这一步是 socket 文件能被清理的前提：进程若被信号直接杀死，`Drop` 不会执行，
-/// 生成的 socket 文件就会残留在运行时目录里。
-async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
+/// 把命令行参数翻译成 `kb_svc_salvo` 的启动配置。
+fn to_launch_config(args: Args) -> LaunchConfig {
+    let mut config = LaunchConfig::new();
 
-        let mut interrupt = match signal(SignalKind::interrupt()) {
-            Ok(stream) => stream,
-            Err(err) => {
-                warn!("无法监听 SIGINT，退回仅等待 Ctrl-C: {err}");
-                let _ = tokio::signal::ctrl_c().await;
-                return;
-            }
-        };
-
-        let mut terminate = match signal(SignalKind::terminate()) {
-            Ok(stream) => stream,
-            Err(err) => {
-                warn!("无法监听 SIGTERM，仅等待 SIGINT: {err}");
-                interrupt.recv().await;
-                return;
-            }
-        };
-
-        tokio::select! {
-            _ = interrupt.recv() => info!("收到 SIGINT，开始优雅退出"),
-            _ = terminate.recv() => info!("收到 SIGTERM，开始优雅退出"),
-        }
+    if let Some(addr) = args.tcp_addr {
+        config = config.with_tcp_addr(addr);
+    }
+    if let Some(path) = args.config_path {
+        config = config.with_config_path(path);
+    }
+    if let Some(dir) = args.runtime_dir {
+        config = config.with_runtime_dir(dir);
+    }
+    if let Some(dir) = args.assets_dir {
+        config = config.with_assets_dir(dir);
     }
 
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
-        info!("收到中断信号，开始优雅退出");
-    }
+    config
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let args = parse_args(std::env::args().skip(1));
+    let config = to_launch_config(parse_args(std::env::args().skip(1)));
 
-    // ── 用户配置 ───────────────────────────────────────────────────
-    let config_path = args
-        .config_path
-        .clone()
-        .unwrap_or_else(SettingsStore::default_config_path);
-
-    let store = SettingsStore::file(&config_path);
-    store.ensure_exists().await?;
-    info!("用户配置: {}", config_path.display());
-
-    let settings = store.load().await?;
-    if settings.services.is_empty() {
-        info!("尚未配置任何 LLM 服务，可在网页右上角「设置」里添加");
-    } else {
-        for (id, service) in &settings.services {
-            info!(
-                "服务 {id}: provider={} model={} api_key={}",
-                service.provider,
-                service.model,
-                if service.has_api_key() {
-                    "已配置"
-                } else {
-                    "缺失"
-                }
-            );
-        }
-    }
-
-    // ── 服务端 ─────────────────────────────────────────────────────
-    let state = Arc::new(AppState::new(store).await);
-
-    let mut server_config = ServerConfig::new(
-        args.tcp_addr
-            .clone()
-            .unwrap_or_else(|| DEFAULT_TCP_ADDR.to_string()),
-    );
-
-    if let Some(dir) = args.runtime_dir.clone() {
-        server_config = server_config.with_runtime_dir(dir);
-    }
-    if let Some(dir) = args.assets_dir.clone() {
-        server_config = server_config.with_assets_dir(dir);
-    }
-
-    let mut bound = bind(&server_config).await?;
-
-    info!("用户界面: http://{}", bound.tcp_addr);
-    info!("插件通道: {}", bound.socket_path().display());
-
-    // TODO(阶段 3)：在此处启动 kb_rig_llm 子进程，并把 `bound.socket_path()` 通过
-    // `--socket <path>` 与 `LLM_KB_PLUGIN_SOCKET` 两种方式传给子进程。
-
-    // 先把 socket 文件的清理守卫拿到 `main` 的作用域里：服务端任务可能在关停时被
-    // `abort`，若守卫留在任务内部，清理会随任务一起被取消，socket 文件就会残留。
-    let socket_guard = bound
-        .take_socket_guard()
-        .ok_or("socket 清理守卫缺失，拒绝继续启动")?;
-
-    let serve_task = tokio::spawn(async move {
-        bound.serve(state).await;
-    });
-
-    shutdown_signal().await;
-
-    match tokio::time::timeout(SHUTDOWN_GRACE, serve_task).await {
-        Ok(Ok(())) => info!("服务端已正常退出"),
-        Ok(Err(err)) => warn!("服务端任务异常结束: {err}"),
-        Err(_) => warn!("服务端未在 {SHUTDOWN_GRACE:?} 内退出，已放弃等待"),
-    }
-
-    match socket_guard.remove() {
-        Ok(()) => info!("已清理 socket 文件: {}", socket_guard.path().display()),
-        Err(err) => warn!(
-            "清理 socket 文件失败 {}: {err}",
-            socket_guard.path().display()
-        ),
-    }
+    launch(config).await?;
 
     Ok(())
 }
@@ -254,14 +145,14 @@ mod tests {
             args,
             Args {
                 tcp_addr: Some("127.0.0.1:9999".to_string()),
-                config_path: Some(PathBuf::from("/tmp/kb.toml")),
-                runtime_dir: Some(PathBuf::from("/run/kb")),
-                assets_dir: Some(PathBuf::from("/tmp/assets")),
+                config_path: Some("/tmp/kb.toml".into()),
+                runtime_dir: Some("/run/kb".into()),
+                assets_dir: Some("/tmp/assets".into()),
             }
         );
     }
 
-    /// 测试缺省参数时四个字段都为空，由调用方补默认值。
+    /// 测试缺省参数时四个字段都为空，由 `kb_svc_salvo` 补默认值。
     ///
     /// - 手段：传入空参数列表。
     /// - 判断：`Args` 等于 `Default`。
@@ -291,5 +182,23 @@ mod tests {
                 assets_dir: None,
             }
         );
+    }
+
+    /// 测试只有被显式指定的参数才会进入 `LaunchConfig`。
+    ///
+    /// - 手段：只设置 `runtime_dir`，其余字段保持缺省，然后读取 `LaunchConfig` 的访问器。
+    /// - 判断：只有运行时目录被设置，另外三项仍为 `None`——默认值由 `kb_svc_salvo` 决定，
+    ///   本 crate 不参与，避免两处默认值漂移。
+    #[test]
+    fn to_launch_config_only_carries_given_options() {
+        let config = to_launch_config(Args {
+            runtime_dir: Some("/tmp/run".into()),
+            ..Args::default()
+        });
+
+        assert_eq!(config.tcp_addr(), None);
+        assert_eq!(config.config_path(), None);
+        assert_eq!(config.runtime_dir(), Some(std::path::Path::new("/tmp/run")));
+        assert_eq!(config.assets_dir(), None);
     }
 }
