@@ -28,3 +28,12 @@
 | :--- | :--- |
 | `kb_rig_llm_v1_agent` | 使用 `rig` 实现与 LLM 对话的插件 |
 | `kb_rig_llm_v1_adapt` | 用于将 `rig` 中实现的 LLM 上下文相关的对象，转换为符合 `abs_llm` （v1） 定义的对象 |
+
+### kb_clients 目录
+
+这是构建知识库客户端应用的目录，目前只提供全功能的客户端 `kb_admin_desktop`。
+未来将提供同样基于 flutter 实现的移动端版本。
+
+| 子项目 | 描述 |
+| :--- | :--- |
+| `kb_admin_desktop` | 全功能的知识库编辑、管理，桌面客户端。|
