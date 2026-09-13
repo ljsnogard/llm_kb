@@ -1,0 +1,10 @@
+[package]
+edition = "2024"
+name = "abs_kb_svc"
+version = "0.1.0"
+
+description = "ABStraction of KnowledgeBase SerViCe."
+
+[dependencies]
+buffex = { workspace = true }
+mm_ptr = { workspace = true }

@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = [
+    "kb_svc/crates/abs_kb_svc",
+    "kb_svc/crates/abs_llm",
+    "kb_svc/crates/kb_svc_salvo",
+
+    "kb_plugins/crates/kb_rig_llm",
+]
+
+[workspace.package]
+edition = "2024"
+authors = ["lino <lino_snsalias@outlook.com>"]
+
+[workspace.dependencies]
+abs_art-bridge = { version = "0.2.2" }
+abs_cancel = { git = "https://gitee.com/lino_snsalias/abs_cancel-rs.git" }
+abs_str = { git = "https://gitee.com/lino_snsalias/abs_str-rs.git" }
+anylr = { git = "https://gitee.com/lino_snsalias/anylr.rs.git", branch = "dev/0.2.0" }
+buffex = { git = "https://gitee.com/lino_snsalias/buffex.git", branch = "dev/0.3.0" }
+mm_ptr = { git = "https://gitee.com/lino_snsalias/mm_ptr.git", branch = "dev/0.1.3" }
+
+funty = { version = "3.0.0-rc2", default-features = false }
+pin-project = { version = "1.1.*" }
+pin-utils = { version = "*" }
+env_logger = { version = "0.11.*" }
+log = { version = "0.4.*" }
+futures-lite = { version = "2" }
+compio = { version = "0.19.*", features = ["fs", "macros", "time"] }
+thiserror = { version = "2.0", default-features = false }

@@ -1,0 +1,6 @@
+[package]
+edition = "2024"
+name = "kb_svc_salvo"
+version = "0.1.0"
+
+description = "Implement KB Service with Salvo"
