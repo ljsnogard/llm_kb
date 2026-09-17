@@ -1,0 +1,45 @@
+[package]
+edition = "2024"
+name = "kb_core_rproxy"
+version = "0.1.0"
+
+description = "LAN application-layer gateway in front of kb_core (no auth yet)."
+
+# 只属于本 crate 的依赖直接写在这里；只有跨成员共用的依赖才放 workspace。
+[dependencies]
+# 协议数据类型（信封就是本网关搬运的东西）。
+abs_kb_svc = { path = "../../../kb_svc/crates/abs_kb_svc" }
+
+# 上游客户端：本网关用它的 `send_envelope` 原样转发信封。
+kb_svc_servo_ipc = { path = "../../../kb_svc/crates/kb_svc_servo_ipc" }
+
+# 有界环形缓冲（上行背压）。workspace 里已经声明，只是之前没人用。
+buffex = { workspace = true }
+
+# 异步运行时与 TCP。`net` feature 在根 Cargo.toml 的 compio 条目里开启。
+compio = { workspace = true }
+
+# 完成量：转发侧收工时叫醒读侧（它可能正停等在满环上）。
+futures-channel = "0.3"
+
+# `zip` / `or`：把读侧与转发侧并发跑在同一个任务里。
+futures-lite = { workspace = true }
+
+env_logger = { version = "0.11.*" }
+log = { workspace = true }
+
+# TCP 帧的载荷编码：与 ipc-channel 内部一致，协议类型已有 postcard 往返测试。
+postcard = { version = "1.1", default-features = false, features = ["use-std"] }
+
+# 解析 kb_core 的 stdio 通知。
+serde_json = { version = "1.*" }
+
+thiserror = { workspace = true }
+
+[[bin]]
+name = "kb-core-rproxy"
+path = "src/main.rs"
+
+# 继承根 Cargo.toml 的 [workspace.lints]（见那里的说明）。
+[lints]
+workspace = true

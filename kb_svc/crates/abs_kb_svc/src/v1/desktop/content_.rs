@@ -159,10 +159,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&usage).expect("应当能序列化");
-        assert!(
-            json.contains(r#""input_tokens":null"#),
-            "实际 JSON: {json}"
-        );
+        assert!(json.contains(r#""input_tokens":null"#), "实际 JSON: {json}");
 
         let parsed: TokenUsage = serde_json::from_str(&json).expect("应当能反序列化");
         assert_eq!(parsed, usage);

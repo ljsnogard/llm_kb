@@ -109,6 +109,10 @@ where
     S: TrKbService,
 {
     match request {
+        Request::Hello(client) => match service.hello(client).await {
+            Ok(info) => Reply::Hello(info),
+            Err(error) => business_reply_(error),
+        },
         Request::ListWorkspaces => match service.list_workspaces().await {
             Ok(list) => Reply::WorkspaceList(list),
             Err(error) => business_reply_(error),

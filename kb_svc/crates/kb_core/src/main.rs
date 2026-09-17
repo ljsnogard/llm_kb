@@ -96,7 +96,7 @@ async fn dispatch_(parsed: Parsed) -> Result<(), CoreError> {
             print!("{}", args_::USAGE);
             Ok(())
         }
-        Command::Serve => serve_::run(&parsed.paths).await,
+        Command::Serve => serve_::run(&parsed.paths, parsed.handshake_prompt).await,
         Command::Workspace(command) => Ok(cli_::run_workspace(&parsed.paths, command).await?),
         Command::Session(command) => Ok(cli_::run_session(&parsed.paths, command).await?),
     }

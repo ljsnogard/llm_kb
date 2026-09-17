@@ -1,12 +1,17 @@
 [workspace]
 resolver = "3"
+# 分组成员，与 README「各 crate 的分工」一节对应。
 members = [
+    # 服务端：主进程 / 通信抽象层 / 传输实现 / LLM 语义
     "kb_svc/crates/abs_kb_svc",
     "kb_svc/crates/abs_llm",
     "kb_svc/crates/kb_core",
+    # 第一版 Salvo + HTTP/WebSocket 实现，已废弃待删（仅作历史资料）
     "kb_svc/crates/kb_svc_salvo",
     "kb_svc/crates/kb_svc_servo_ipc",
 
+    # 插件与配套进程
+    "kb_plugins/crates/kb_core_rproxy",
     "kb_plugins/crates/kb_rig_llm_v1_adapt",
     "kb_plugins/crates/kb_rig_llm_v1_agent",
 ]
@@ -66,9 +71,13 @@ version = "0.4.*"
 [workspace.dependencies.futures-lite]
 version = "2"
 
+# `fs`   —— kb_core 的本地文件存储
+# `net`  —— kb_core_rproxy 的 TCP 监听（缺了它 compio 就没有 `net` 模块）
+# `time` —— 计时/超时
+# `macros` —— `#[compio::main]` / `#[compio::test]`
 [workspace.dependencies.compio]
 version = "0.19.*"
-features = ["fs", "macros", "time"]
+features = ["fs", "macros", "net", "time"]
 
 [workspace.dependencies.thiserror]
 version = "2.0"

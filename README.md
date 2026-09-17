@@ -1,49 +1,108 @@
 # llm_kb
 
-`llm_kb` 是个人知识库应用，其中的知识内容主要来自 LLM 服务生成的内容以及用户个人编辑整理。  
+`llm_kb` 是个人知识库应用：知识内容主要来自 LLM 服务生成的内容以及用户个人编辑整理，
+最终由一个以 **Turso** 为载体的知识数据库持有，对外提供增删查改与搜索、检索能力。
+其他能力（与 LLM 通信、编辑管理界面……）以**插件**的形式存在。
 
-`llm_kb` 本身是一个分布式应用，它的主要功能——维护一个以 Turso 为载体的知识数据库，进行增删查改等操作，并对外提供搜索、检索等功能。
-其他扩展的功能都将以插件的形式存在，目前规划了如下的插件功能：
-- 与 LLM 进行通信，并将 LLM 生成的数据存进知识库
-- 知识库的编辑和管理界面
+进程之间走**本机 IPC**（`kb_svc_servo_ipc`，基于 servo/ipc-channel）；
+需要跨机（比如局域网另一台机器）时，由 `kb_core_rproxy` 把 IPC 暴露成 TCP。
 
-## 项目架构
+---
 
-### kb_svc 目录
+## 1. 目录结构
 
-这是存放知识库的基本骨架，其中包括
+```text
+llm_kb/
+├── kb_svc/crates/       知识库服务本身：主进程 + 抽象层 + 传输实现
+├── kb_plugins/crates/   插件与配套进程：LLM 插件、跨机网关
+├── kb_clients/          客户端应用（Flutter）
+├── dev-notes/           开发日志：技术决策的前因后果（新记录都写这里）
+├── external/            临时验证工程（不属于 workspace）；整个目录已 gitignore
+├── AGENTS.md            代码修改纪律
+├── Cargo.toml           workspace 定义与共用依赖
+└── rust-toolchain.toml  工具链锁定
+```
 
-| 子项目 | 描述 |
-| :---:  | :--- |
-| `kb_core` | 知识库的主进程，主要功能是围绕一个 Turso 数据库提供增删查改和模糊搜索、向量搜索，以及插件管理 |
-| `abs_llm` | 对各类 LLM 的服务进行提供抽象和统一的接口 |
-| `abs_kb_svc` | `kb_core` 中对各类插件的抽象和调用接口规范 |
-| `kb_svc_salvo` | 使用 `Salvo` 框架以及 http3 协议来作为 `kb_core` 的第一个版本实现，这也是第一个版本中各个插件与主进程的通信方式 |
+## 2. 各 crate 的分工
 
-### kb_plugins 目录
+### `kb_svc/crates/` —— 服务端
 
-这是存放知识库应用各种基本插件的目录，其中包括
+| crate | 职责 | 状态 |
+| :--- | :--- | :--- |
+| `kb_core` | **主进程**（可执行文件 `kb-core`）：持有工作区与会话的存储、把按域 RPC 实现接上 IPC、常驻服务客户端 | ✅ 可跑 |
+| `abs_kb_svc` | **业务通信抽象层**：协议数据（`v1::desktop`）、按业务域拆分的异步 RPC trait（`rpc_`）、两层握手的约定（`handshake_`）。**协议的唯一出处** | ✅ 首批域 |
+| `kb_svc_servo_ipc` | 上面那套抽象的**传输实现**：ipc-channel 的引导、三通道连接、客户端代理、服务端派发 | ✅ 可跑 |
+| `abs_llm` | LLM 的**语义抽象**：对话角色、增量输出、用量、能力集等与 provider 无关的词汇 | ✅ |
+| `kb_svc_salvo` | 第一版基于 Salvo + HTTP/WebSocket 的实现 | ❌ **已废弃**，待删（仅作历史资料） |
 
-| 子项目 | 描述 |
-| :--- | :--- |
-| `kb_rig_llm_v1_agent` | 使用 `rig` 实现与 LLM 对话的插件 |
-| `kb_rig_llm_v1_adapt` | 用于将 `rig` 中实现的 LLM 上下文相关的对象，转换为符合 `abs_llm` （v1） 定义的对象 |
+### `kb_plugins/crates/` —— 插件与配套进程
 
-### kb_clients 目录
+| crate | 职责 | 状态 |
+| :--- | :--- | :--- |
+| `kb_rig_llm_v1_agent` | 用 `rig` 直连 LLM 服务商，自己保留完整对话上下文 | 🚧 |
+| `kb_rig_llm_v1_adapt` | rig 的原始数据 → `abs_llm::v1` 的转换 | 🚧 |
+| `kb_core_rproxy` | **跨机网关**：启动一个 `kb_core`，自己监听 TCP，把远程访问者当作"格式与 ipc 客户端相同"的客户端转发 | ✅ 可跑（**无鉴权、无 TLS**，仅用于受信网络） |
 
-这是构建知识库客户端应用的目录，目前只提供全功能的客户端 `kb_admin_desktop`。
-未来将提供同样基于 flutter 实现的移动端版本。
+### `kb_clients/` —— 客户端
 
-| 子项目 | 描述 |
-| :--- | :--- |
-| `kb_admin_desktop` | 全功能的知识库编辑、管理，桌面客户端。|
+| 目录 | 职责 | 状态 |
+| :--- | :--- | :--- |
+| `kb_admin_desktop` | Flutter 桌面客户端，含 flutter_rust_bridge 的 Rust 侧 | 🚧 界面骨架 |
 
-## 构建环境
+## 3. 一次请求怎么走
 
-工具链由仓库根的 `rust-toolchain.toml` 锁定为 **nightly**：`abs_llm` 使用了
-`#![feature(try_trait_v2)]`（见 `kb_svc/crates/abs_llm/src/lib.rs`），stable 编译不过。
-`rustup` 会自动按该文件准备工具链与 `rustfmt` / `clippy` 组件，无需手工 `rustup default`。
+```text
+kb_admin_desktop / 远程客户端
+      │ ① 系统层握手：找到端点（本机看 IPC 端点文件；跨机连 rproxy 的 TCP 端口）
+      │ ② 应用层握手：Request::Hello → Reply::Hello        ← abs_kb_svc 的协议
+      ▼
+  kb_core_rproxy（可选：只有跨机时才需要）
+      │ TCP 帧 = [u32 长度][种类][postcard]，上行经有界环形缓冲做背压
+      ▼
+  kb_svc_servo_ipc::Client ──IPC──► kb_svc_servo_ipc::Listener
+                                          │
+                                  kb_core::ipc_::KbService   ← 按域 RPC 的服务端实现
+                                          │
+                                  kb_core::store_::Store     ← 本地文件（将来换 Turso）
+                                          │
+      ◄──────── ReplyEnvelope ────────────┘
+```
+
+- **协议**（数据、trait、握手语义）只在 `abs_kb_svc` 定义；换传输只换实现 crate。
+- 两条链路的细节：本机 IPC 见 `kb_svc_servo_ipc` 的 crate 文档，
+  跨机见 `kb_core_rproxy` 的 README。
+
+## 4. 当前状态
+
+**已经跑通的**：本机 IPC 上的工作区 / 会话增删查改（`kb_core` 常驻服务客户端）、
+应用层握手与版本校验、跨机网关的请求转发与上行背压。
+
+**还没做的**：其余业务域（设置 / 目录浏览 / LLM 生成与事件流）、并发服务多客户端、
+优雅退出、鉴权、以及把存储从本地文件换成 Turso。
+每一项的来龙去脉见 `dev-notes/` 下的对应文档。
+
+## 5. 构建环境
+
+工具链由仓库根的 `rust-toolchain.toml` 锁定为 **nightly**，有两个原因：
+
+- `abs_llm` 使用了 `#![feature(try_trait_v2)]`，stable 编译不过；
+- 可取消 future 的宏 `gen_mcf2` 要求 `#![feature(impl_trait_in_assoc_type)]`。
+
+`rustup` 会按该文件自动准备工具链与 `rustfmt` / `clippy`，无需手工 `rustup default`。
 
 客户端 `kb_admin_desktop` 里的 flutter_rust_bridge 子项目由 Cargokit 驱动，
-它不会读取 `rust-toolchain.toml`（`rustup run` 会覆盖工具链文件），因此另有一份
+它不读 `rust-toolchain.toml`（`rustup run` 会覆盖工具链文件），因此另有一份
 `kb_clients/kb_admin_desktop/rust/cargokit.yaml` 把工具链对齐到同一条通道。
+
+> 本机沙箱的 `~/.cargo` 是只读的；在这台机器上构建要
+> `CARGO_HOME="$PWD/external/cargo-home" cargo test --workspace`
+> （正常开发机不需要），详见 `dev-notes/llm_kb-20260917-1655.md` §4。
+
+## 6. 文档在哪
+
+- `kb_svc/crates/abs_kb_svc/README.md`：业务通信抽象层的定位、契约与接口形状；
+  协议数据见 `abs_kb_svc/src/v1/desktop/`，两层握手见 `handshake_.rs`。
+- `kb_svc/crates/kb_core/README.md`：主进程的操作手册（命令行、存储布局、实测命令）。
+- `kb_plugins/crates/kb_core_rproxy/README.md`：跨机网关的用法与能力边界。
+- `dev-notes/`：技术决策的前因后果与开放事项，索引见
+  [`dev-notes/llm_kb-20260917-1655.md`](dev-notes/llm_kb-20260917-1655.md)。

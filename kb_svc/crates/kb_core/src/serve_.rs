@@ -18,13 +18,14 @@
 //!
 //! 终止方式仍然是 `Ctrl-C`：本进程没有安装信号处理器，走操作系统的默认处置。
 
+use std::io::Write;
 use std::sync::Arc;
 
 use abs_kb_svc::v1::desktop::PROTOCOL_VERSION;
 use kb_svc_servo_ipc::Listener;
 use log::{info, warn};
 
-use crate::args_::Paths;
+use crate::args_::{HandshakePrompt, Paths};
 use crate::error_::CoreError;
 use crate::ipc_::KbService;
 use crate::store_::Store;
@@ -36,10 +37,12 @@ use crate::store_::Store;
 /// 存储打不开、端点建不出来时返回 [`CoreError`]。
 /// 单个工作区文件坏掉**不会**阻止启动，只在日志里给一条警告；
 /// 单个客户端连接异常结束也不会让服务退出，只记一条警告后继续等下一位。
-pub async fn run(paths: &Paths) -> Result<(), CoreError> {
+pub async fn run(paths: &Paths, handshake_prompt: HandshakePrompt) -> Result<(), CoreError> {
     let store = Store::open(&paths.storage_dir).await?;
     let service = KbService::new(store);
     let listener = Arc::new(Listener::bind(&paths.runtime_dir)?);
+
+    announce_ipc_name_file(&listener, handshake_prompt)?;
 
     info!(
         "kb_core v{}（协议 v{PROTOCOL_VERSION}）",
@@ -67,4 +70,45 @@ pub async fn run(paths: &Paths) -> Result<(), CoreError> {
             Err(error) => warn!("本次连接异常结束: {error}"),
         }
     }
+}
+
+/// 按 `--handshake-prompt` 的取值，把 **IPC 端点文件名**通知给启动本进程的父进程。
+///
+/// 这是**系统层握手**的一半：父进程（例如 `kb_core_rproxy`）需要知道"连哪里"，
+/// 而从运行时目录里猜名字有竞态与歧义，所以给它一个显式通道。
+/// 协议层面的应用层握手不在这里——那是 `Request::Hello` 的事。
+///
+/// 格式（`stdio` 时往 stdout 打一行 JSON）**由本 crate 决定**，不进 `abs_kb_svc`：
+///
+/// ```json
+/// {"event":"ipc_ready","ipc_name_file":"…/kb-20260917-….ipc","protocol_version":1,"pid":1234}
+/// ```
+///
+/// 只承诺**文件名**：文件内容（当前可连的端点名）要等服务端真正开始 accept
+/// 才会写进去，客户端本来就有重试。
+///
+/// # Errors
+///
+/// stdout 写不出去（例如管道已关闭）时返回 [`CoreError::BlockingTask`]。
+fn announce_ipc_name_file(
+    listener: &Listener,
+    handshake_prompt: HandshakePrompt,
+) -> Result<(), CoreError> {
+    if handshake_prompt != HandshakePrompt::Stdio {
+        return Ok(());
+    }
+
+    let notice = serde_json::json!({
+        "event": "ipc_ready",
+        "ipc_name_file": listener.name_file().display().to_string(),
+        "protocol_version": PROTOCOL_VERSION,
+        "pid": std::process::id(),
+    });
+
+    let mut stdout = std::io::stdout();
+    writeln!(stdout, "{notice}").map_err(|error| CoreError::BlockingTask(error.to_string()))?;
+    stdout
+        .flush()
+        .map_err(|error| CoreError::BlockingTask(error.to_string()))?;
+    Ok(())
 }

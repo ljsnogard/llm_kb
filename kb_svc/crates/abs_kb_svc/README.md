@@ -11,7 +11,7 @@
 > `TrSessionService`（工作区与会话的七条增删查改），并由
 > [`tests/rpc_contract.rs`](tests/rpc_contract.rs) 用一份 `gen_mcf2` 展开的 mock
 > 实现守住契约。
-> 其余域（设置 / 目录 / 握手 / 生成 / 事件订阅）与插件侧数据（`v1::plugin`）
+> 其余域（设置 / 目录 / 生成 / 事件订阅）与插件侧数据（`v1::plugin`）
 > **尚未落地**，其公开 API 属于**对外约定**，按 `AGENTS.md` 第 1 条须经团队确认后
 > 才能落到代码。
 >
@@ -114,8 +114,14 @@
 | :--- | :--- |
 | `TrKbEndpoint` | 所有按域 trait 的公共基底，只定义实现方的错误类型 |
 | `RpcError<E>` | 一次调用的失败：`Business(ErrorReply)` / `Transport(E)` 两个变体 |
+| `TrHandshake` | **应用层握手**：`hello(ClientInfo) -> ServerInfo`（协议要求的第一条请求） |
 | `TrWorkspaceService` | 工作区的增删查（3 个方法） |
 | `TrSessionService` | 会话的增删查改（4 个方法） |
+| `TrKbService` | 上面几个的组合 trait（服务端实现与客户端代理都实现它） |
+
+**两个层面的握手**：应用层握手（本节这些类型 + [`v1::desktop::handshake_`](src/v1/desktop/handshake_.rs)）
+与**系统层握手**（"怎么找到端点"，由传输实现决定，不属于本 crate）。
+两者各自解决什么、为什么分开，写在 `handshake_` 的模块文档里。
 
 **形状上的要点**（细节见该模块的模块文档）：
 

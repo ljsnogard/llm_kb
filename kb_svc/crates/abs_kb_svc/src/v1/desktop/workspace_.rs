@@ -107,10 +107,9 @@ mod tests {
             path: "/home/me/notes".to_string(),
         };
 
-        let json = serde_json::to_string(&(local_id.clone(), workspace.clone()))
-            .expect("应当能序列化");
-        let parsed: (LocalId, Workspace) =
-            serde_json::from_str(&json).expect("应当能反序列化");
+        let json =
+            serde_json::to_string(&(local_id.clone(), workspace.clone())).expect("应当能序列化");
+        let parsed: (LocalId, Workspace) = serde_json::from_str(&json).expect("应当能反序列化");
 
         assert_eq!(parsed.0, local_id);
         assert_eq!(parsed.1, workspace);

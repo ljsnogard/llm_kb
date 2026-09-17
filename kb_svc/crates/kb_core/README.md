@@ -36,8 +36,8 @@ cargo run -p kb_core
 ```
 
 **进程会一直在那里**，直到你按 `Ctrl-C`。客户端（今天的
-`kb_svc_servo_ipc::Client`，将来的 `kb_admin_desktop`）靠 `IPC 端点文件`
-里那个名字找上来：
+`kb_svc_servo_ipc::Client`、经 `kb_core_rproxy` 过来的远程客户端，将来的
+`kb_admin_desktop`）靠 `IPC 端点文件`里那个名字找上来：
 
 ```text
 运行时目录/
@@ -51,6 +51,26 @@ cargo run -p kb_core
 
 进程被强杀时名字文件会留下（内容指向已经不存在的端点），客户端会重试到超时；
 重新启动 `kb_core` 时会把运行时目录里所有 `kb-*.ipc` 清掉。
+
+如果 `kb_core` 是被**别的进程启动**的（例如 `kb_core_rproxy`），让父进程去猜
+文件名既啰嗦又有竞态，所以有一个显式通道：
+
+```bash
+kb-core --handshake-prompt stdio --runtime-dir /tmp/kb-demo/run --storage-dir /tmp/kb-demo/data
+```
+
+它会在 stdout 上打**一行** JSON：
+
+```json
+{"event":"ipc_ready","ipc_name_file":"…/kb-20260917-….ipc","protocol_version":1,"pid":1234}
+```
+
+**默认是 `none`**（stdout 一个字都不多），只有显式要求时才打。
+
+> 这是**系统层握手**——只解决"父进程知道连哪里"。协议里还有一个**应用层握手**
+> （`Request::Hello` → `Reply::Hello` → `Event::Ready`），它解决"谈得成"。
+> 两层各自的职责见 `kb_svc/crates/abs_kb_svc/src/v1/desktop/handshake_.rs`
+> 的模块文档。
 
 不想污染用户目录时，把两个目录都指到 `/tmp`：
 
@@ -145,7 +165,7 @@ $ kb workspace remove "$WID"
 cargo test -p kb_core
 ```
 
-预期 26 项全部 `ok`，其中覆盖了存储语义、命令行解析，以及**整条 IPC 链路**：
+预期 27 项全部 `ok`，其中覆盖了存储语义、命令行解析，以及**整条 IPC 链路**：
 
 ```text
 test ipc_::tests_::ipc_round_trip_reaches_the_local_store_ ... ok     # 客户端→IPC→Store→磁盘
@@ -180,6 +200,7 @@ kb-core [--runtime-dir <目录>] [--storage-dir <目录>] [<子命令>]
 | :--- | :--- | :--- |
 | `--runtime-dir <目录>` | `$XDG_RUNTIME_DIR/llm_kb`（回退系统临时目录下的 `llm_kb`） | 运行时目录。IPC 端点名字文件 `kb-<日期>-<uuid>.ipc` 放在这里。 |
 | `--storage-dir <目录>` | `<运行时目录>/storage` | 工作区与会话的存储目录。显式给出时与运行时目录完全独立。 |
+| `--handshake-prompt <方式>` | `none` | `none`：stdout 保持干净；`stdio`：向 stdout 打一行 JSON 通知（含 IPC 端点文件名），供启动本进程的父进程读取。 |
 | `-h` / `--help` | — | 打印用法说明。 |
 
 ### 2.2 子命令
@@ -342,9 +363,10 @@ kb_admin_desktop / 测试客户端
 
 ## 5. 下一轮（尚未实现）
 
-1. **其余业务域**：`Hello`（握手）、设置（`ListServices` / `UpsertService`…）、
+1. **其余业务域**：设置（`ListServices` / `UpsertService`…）、
    目录浏览（`ListDirectory`）、生成（`Ask` / `Cancel` + 事件流）。
-   它们的按域 trait 还没落地，服务端现在对它们明确回 `BadRequest`；
+   它们的按域 trait 还没落地，服务端对它们明确回 `BadRequest`
+   （`Hello` 已经实现，见下）；
 2. **并发服务多个客户端**：当前一次只服务一个连接（上一个断开才回到 `accept`）。
    要并发就得把 `accept` 循环与 `serve` 拆到不同任务上，并处理端点的生命周期；
 3. **优雅退出**：当前依赖操作系统的默认信号处置；将来要显式撤下端点名字、

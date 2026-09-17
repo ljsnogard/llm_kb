@@ -22,9 +22,9 @@ use std::sync::{Mutex, MutexGuard};
 
 use abs_cancel::{CancelledToken, TrCancellationToken, TrMayCancel};
 use abs_kb_svc::v1::desktop::{
-    AddWorkspaceRequest, CreateSessionRequest, ErrorCode, ErrorReply, RpcError, SessionDetail,
-    SessionId, SessionList, SessionSummary, TrKbEndpoint, TrSessionService, TrWorkspaceService,
-    Workspace, WorkspaceId, WorkspaceList,
+    AddWorkspaceRequest, ClientInfo, CreateSessionRequest, ErrorCode, ErrorReply, PROTOCOL_VERSION,
+    RpcError, ServerInfo, SessionDetail, SessionId, SessionList, SessionSummary, TrHandshake,
+    TrKbEndpoint, TrSessionService, TrWorkspaceService, Workspace, WorkspaceId, WorkspaceList,
 };
 use gen_mcf2::gen_may_cancel_future;
 use kb_svc_servo_ipc::{Client, Listener, ServoIpcError};
@@ -266,6 +266,44 @@ where
         return business_(ErrorCode::NotFound, format!("会话不存在: {session_id}"));
     }
     Ok(())
+}
+
+/// 服务端：应用层握手（版本不匹配就明确拒绝）。
+#[gen_may_cancel_future(Hello)]
+async fn hello_async<'s, C>(
+    service: &'s TestService,
+    client: ClientInfo,
+    cancel: C,
+) -> Result<ServerInfo, RpcError<ServoIpcError>>
+where
+    C: TrCancellationToken,
+{
+    if cancel.is_cancelled() {
+        return Err(RpcError::Transport(ServoIpcError::Cancelled));
+    }
+    let _ = service;
+
+    if client.protocol_version != PROTOCOL_VERSION {
+        return Err(RpcError::Business(ErrorReply {
+            code: ErrorCode::BadRequest,
+            message: format!("协议版本不匹配: {}", client.protocol_version),
+        }));
+    }
+    Ok(ServerInfo {
+        server_version: "test".to_string(),
+        protocol_version: PROTOCOL_VERSION,
+    })
+}
+
+impl TrHandshake for TestService {
+    type Hello<'f>
+        = HelloAsync<'f, 'f>
+    where
+        Self: 'f;
+
+    fn hello<'f>(&'f self, client: ClientInfo) -> Self::Hello<'f> {
+        HelloAsync::new(self, client)
+    }
 }
 
 impl TrKbEndpoint for TestService {
@@ -574,4 +612,41 @@ fn connect_times_out_without_a_server_() {
         matches!(error, ServoIpcError::ConnectTimeout { .. }),
         "实际错误: {error}"
     );
+}
+
+/// 测试**应用层握手**能整条走通 IPC，且版本不匹配被明确拒绝。
+///
+/// - 手段：起服务端后先用正确的 `PROTOCOL_VERSION` 调 `client.hello(..)`，
+///   再用一个错的版本调一次。
+/// - 判断：前者拿到 `ServerInfo`（版本与协议号都对）；后者是
+///   `RpcError::Business(BadRequest)` —— 版本不一致必须是明确的业务拒绝，
+///   而不是"尽力而为"地继续。
+#[test]
+fn application_handshake_round_trips_and_rejects_version_mismatch_() {
+    let (_guard, runtime) = temp_runtime_();
+    let server = spawn_server_(runtime.clone(), 1);
+    let client = Client::connect(&runtime).expect("应当能连上服务端");
+
+    let info = block_on_(client.hello(ClientInfo {
+        client_name: "test".to_string(),
+        client_version: "0.1.0".to_string(),
+        protocol_version: PROTOCOL_VERSION,
+    }))
+    .expect("握手应当成功");
+    assert_eq!(info.protocol_version, PROTOCOL_VERSION);
+    assert_eq!(info.server_version, "test");
+
+    let error = block_on_(client.hello(ClientInfo {
+        client_name: "test".to_string(),
+        client_version: "0.1.0".to_string(),
+        protocol_version: PROTOCOL_VERSION + 1,
+    }))
+    .expect_err("版本不匹配应当被拒绝");
+    match error {
+        RpcError::Business(reply) => assert_eq!(reply.code, ErrorCode::BadRequest),
+        other => panic!("应当是业务错误，实际: {other:?}"),
+    }
+
+    drop(client);
+    server.join().expect("服务端线程应当正常结束");
 }

@@ -35,9 +35,10 @@ use std::time::Duration;
 
 use abs_cancel::TrCancellationToken;
 use abs_kb_svc::v1::desktop::{
-    AddWorkspaceRequest, CreateSessionRequest, Event, Reply, ReplyEnvelope, Request,
-    RequestEnvelope, RequestId, RpcError, SessionDetail, SessionId, SessionList, SessionSummary,
-    TrKbEndpoint, TrSessionService, TrWorkspaceService, Workspace, WorkspaceId, WorkspaceList,
+    AddWorkspaceRequest, ClientInfo, CreateSessionRequest, Event, Reply, ReplyEnvelope, Request,
+    RequestEnvelope, RequestId, RpcError, ServerInfo, SessionDetail, SessionId, SessionList,
+    SessionSummary, TrHandshake, TrKbEndpoint, TrSessionService, TrWorkspaceService, Workspace,
+    WorkspaceId, WorkspaceList,
 };
 use futures_channel::oneshot;
 use futures_lite::{Stream, StreamExt};
@@ -146,6 +147,27 @@ impl Client {
         )
     }
 
+    /// 发一个**原始信封**并等它的应答（`request_id` 由调用方给）。
+    ///
+    /// 这是给**代理/网关**用的低层入口：调用方自己负责业务分派，本方法只负责
+    /// "把信封送到、把对应 `request_id` 的应答拿回来"。协议里的应用层握手
+    /// （`Request::Hello`）也可以通过它转发，因此代理不必理解任何业务域。
+    ///
+    /// ```no_run
+    /// # use abs_kb_svc::v1::desktop::{Request, RequestEnvelope};
+    /// # use kb_svc_servo_ipc::Client;
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::connect("/tmp/kb-demo")?;
+    /// let envelope = RequestEnvelope::new("q-1", Request::ListWorkspaces);
+    /// let reply = client.send_envelope(envelope).await?;
+    /// # let _ = reply;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn send_envelope<'f>(&'f self, envelope: RequestEnvelope) -> SendEnvelopeAsync<'f, 'f> {
+        SendEnvelopeAsync::new(self, envelope)
+    }
+
     /// 发一个请求并等它的应答。
     ///
     /// 三个分支对应三种结局：收到应答、路由线程退出（对端关闭）、取消令牌先触发。
@@ -157,26 +179,45 @@ impl Client {
     where
         C: TrCancellationToken,
     {
+        let request_id = RequestId::new(format!(
+            "q-{}",
+            self.next_request_.fetch_add(1, Ordering::Relaxed)
+        ));
+        let envelope = RequestEnvelope::new(request_id, request);
+        Ok(self.send_envelope_(envelope, cancel).await?.reply)
+    }
+
+    /// 发一个**原始信封**并等它的应答；`request_id` 由调用方给。
+    ///
+    /// 中间代理（`kb_core_rproxy`）就是靠它把远程客户端的请求原样转发出去的：
+    /// 它自己不做业务分派，只负责搬运信封。
+    ///
+    /// 注意 `request_id` 在**本连接内**必须唯一（协议如此规定）：
+    /// 撞车会让先来的那个等待者被后来的顶掉。
+    async fn send_envelope_<C>(
+        &self,
+        envelope: RequestEnvelope,
+        cancel: C,
+    ) -> Result<ReplyEnvelope, RpcError<ServoIpcError>>
+    where
+        C: TrCancellationToken,
+    {
         // 已经取消就没必要打扰服务端。
         if cancel.is_cancelled() {
             return Err(RpcError::Transport(ServoIpcError::Cancelled));
         }
 
-        let request_id = RequestId::new(format!(
-            "q-{}",
-            self.next_request_.fetch_add(1, Ordering::Relaxed)
-        ));
+        let request_id = envelope.request_id.clone();
         let (completion, waiting) = oneshot::channel();
         lock_(&self.pending_).insert(request_id.to_string(), completion);
 
-        let envelope = RequestEnvelope::new(request_id.clone(), request);
         if let Err(error) = self.request_tx_.send(envelope) {
             lock_(&self.pending_).remove(request_id.as_str());
             return Err(RpcError::Transport(error.into()));
         }
 
         match await_reply_(waiting, cancel).await {
-            Some(Ok(envelope)) => Ok(envelope.reply),
+            Some(Ok(envelope)) => Ok(envelope),
             // 完成量被丢弃 = 路由线程退出 = 对端没了。
             Some(Err(_dropped)) => Err(RpcError::Transport(ServoIpcError::PeerClosed)),
             None => {
@@ -203,6 +244,39 @@ impl core::fmt::Debug for Client {
 // ============================================================================
 // 模块级 async fn：宏只能作用于它们，trait 的关联类型由它们生成的类型来填
 // ============================================================================
+
+/// [`Client::send_envelope`] 的实现体：转发一个原始信封。
+#[gen_may_cancel_future(SendEnvelope, pub)]
+pub async fn send_envelope_async<'c, C>(
+    client: &'c Client,
+    envelope: RequestEnvelope,
+    cancel: C,
+) -> Result<ReplyEnvelope, RpcError<ServoIpcError>>
+where
+    C: TrCancellationToken,
+{
+    client.send_envelope_(envelope, cancel).await
+}
+
+/// [`TrHandshake::hello`] 的代理实现：**应用层握手**的第一步。
+#[gen_may_cancel_future(Hello, pub)]
+pub async fn hello_async<'c, C>(
+    client: &'c Client,
+    announcement: ClientInfo,
+    cancel: C,
+) -> Result<ServerInfo, RpcError<ServoIpcError>>
+where
+    C: TrCancellationToken,
+{
+    match client
+        .request_(Request::Hello(announcement), cancel)
+        .await?
+    {
+        Reply::Hello(info) => Ok(info),
+        Reply::Error(error) => Err(RpcError::Business(error)),
+        other => Err(RpcError::Transport(unexpected_("Hello", &other))),
+    }
+}
 
 /// [`TrWorkspaceService::list_workspaces`] 的代理实现。
 #[gen_may_cancel_future(ListWorkspaces, pub)]
@@ -357,6 +431,17 @@ where
 // ============================================================================
 // 把生成的 future 填进 trait 的关联类型
 // ============================================================================
+
+impl TrHandshake for Client {
+    type Hello<'f>
+        = HelloAsync<'f, 'f>
+    where
+        Self: 'f;
+
+    fn hello<'f>(&'f self, client: ClientInfo) -> Self::Hello<'f> {
+        HelloAsync::new(self, client)
+    }
+}
 
 impl TrKbEndpoint for Client {
     type Error = ServoIpcError;

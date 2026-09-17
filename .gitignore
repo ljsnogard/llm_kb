@@ -14,4 +14,4 @@ node_modules/
 /playwright/.auth/
 
 # 本机沙箱绕行用的 Cargo 缓存；不要提交
-/external/cargo-home/
+**/external

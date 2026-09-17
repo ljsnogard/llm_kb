@@ -1,12 +1,14 @@
 //! 把本地文件存储接上 IPC：`kb_core` 这一侧的按域 RPC trait 实现。
 //!
-//! [`KbService`] 把 [`TrWorkspaceService`] / [`TrSessionService`] 的每个方法原样
+//! [`KbService`] 把 [`TrHandshake`] / [`TrWorkspaceService`] / [`TrSessionService`]
+//! 的每个方法原样
 //! 转发给 [`Store`]，并把 [`StoreError`] 翻成协议里的业务错误：
 //!
 //! | `StoreError` | `ErrorCode` |
 //! | :--- | :--- |
 //! | `NotFound` | `NotFound` |
 //! | `InvalidId` | `BadRequest` |
+//! | `Cancelled` | `Internal`（服务端侧被取消） |
 //! | 其它（I/O、解码、阻塞任务） | `Internal` |
 //!
 //! 一个刻意的选择：[`TrKbEndpoint::Error`] 用 [`Infallible`]——服务端这一侧
@@ -16,19 +18,24 @@
 //! # 关于 `AGENTS.md` 第 4 条
 //!
 //! 本 crate 因为要展开 [`gen_mcf2::gen_may_cancel_future`]，依赖链上出现了
-//! `gen_mcf2`。但 `kb_core` 是**可执行程序**，没有对外库接口：
-//! [`crate::store_::Store`] 上那些普通 `async fn` 的调用者只有本 crate 自己
-//! （就是这里的 `KbService`），不存在"外部调用者通过取消令牌发信号"的场景。
-//! 因此没有把它们改造成可取消 future；**真正对外的异步面**是这里这七个由宏
-//! 展开的方法，它们每一个都检查了传进来的取消令牌。
+//! `gen_mcf2`，于是第 4 条落在这里。处理方式是**一路贯到底**：
+//!
+//! - 本文件里每个方法都由宏展开，且都检查传进来的取消令牌；
+//! - 取消令牌**继续往下传**给 [`crate::store_::Store`]
+//!   （`.may_cancel_with(cancel)`），而不是在这里丢掉自己造一个；
+//! - `Store` 的每个操作同样是宏展开的可取消 future（见那里模块文档），
+//!   所以"客户端撤销了一次调用"能一路传到最后一次文件等待。
+//!
+//! （早先曾以"`kb_core` 是 bin、没有对外库接口"为由只给本文件加取消，
+//! 那个判断是错的：只要存在被取消的可能性，就不该从设计上抹掉它。）
 
 use std::convert::Infallible;
 
 use abs_cancel::{TrCancellationToken, TrMayCancel};
 use abs_kb_svc::v1::desktop::{
-    AddWorkspaceRequest, CreateSessionRequest, ErrorCode, ErrorReply, RpcError, SessionDetail,
-    SessionId, SessionList, SessionSummary, TrKbEndpoint, TrSessionService, TrWorkspaceService,
-    Workspace, WorkspaceId, WorkspaceList,
+    AddWorkspaceRequest, ClientInfo, CreateSessionRequest, ErrorCode, ErrorReply, PROTOCOL_VERSION,
+    RpcError, ServerInfo, SessionDetail, SessionId, SessionList, SessionSummary, TrHandshake,
+    TrKbEndpoint, TrSessionService, TrWorkspaceService, Workspace, WorkspaceId, WorkspaceList,
 };
 use gen_mcf2::gen_may_cancel_future;
 
@@ -78,6 +85,41 @@ fn cancelled_() -> RpcError<Infallible> {
 }
 
 // ── 模块级 async fn：宏只能作用于它们 ──────────────────────────────────
+
+/// [`TrHandshake::hello`] 的服务端实现：**应用层握手**的第一步。
+///
+/// 服务端在这一步只做两件事：校验协议版本、把自己的身份报回去。
+/// 它**不**负责"客户端怎么找到我"——那是系统层握手（传输实现）的事，
+/// 两者的分工见 `abs_kb_svc::v1::desktop::handshake_` 的模块文档。
+#[gen_may_cancel_future(Hello, pub)]
+pub async fn hello_async<'s, C>(
+    service: &'s KbService,
+    client: ClientInfo,
+    cancel: C,
+) -> Result<ServerInfo, RpcError<Infallible>>
+where
+    C: TrCancellationToken,
+{
+    if cancel.is_cancelled() {
+        return Err(cancelled_());
+    }
+    let _ = service;
+
+    if client.protocol_version != PROTOCOL_VERSION {
+        return Err(RpcError::Business(ErrorReply {
+            code: ErrorCode::BadRequest,
+            message: format!(
+                "协议版本不匹配：客户端说 v{}，服务端是 v{PROTOCOL_VERSION}",
+                client.protocol_version
+            ),
+        }));
+    }
+
+    Ok(ServerInfo {
+        server_version: env!("CARGO_PKG_VERSION").to_string(),
+        protocol_version: PROTOCOL_VERSION,
+    })
+}
 
 /// [`TrWorkspaceService::list_workspaces`] 的服务端实现。
 #[gen_may_cancel_future(ListWorkspaces, pub)]
@@ -228,6 +270,17 @@ where
 }
 
 // ── 把生成的 future 填进 trait 的关联类型 ─────────────────────────────
+
+impl TrHandshake for KbService {
+    type Hello<'f>
+        = HelloAsync<'f, 'f>
+    where
+        Self: 'f;
+
+    fn hello<'f>(&'f self, client: ClientInfo) -> Self::Hello<'f> {
+        HelloAsync::new(self, client)
+    }
+}
 
 impl TrKbEndpoint for KbService {
     type Error = Infallible;

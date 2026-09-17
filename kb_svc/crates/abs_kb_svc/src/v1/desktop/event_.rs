@@ -16,7 +16,7 @@
 use abs_llm::v1::cont::{Capabilities, FinishReason, LogicOutput};
 use serde::{Deserialize, Serialize};
 
-use super::content_::{ToolCallRecord, TokenUsage};
+use super::content_::{TokenUsage, ToolCallRecord};
 use super::error_::ErrorCode;
 use super::handshake_::ServerState;
 use super::ids_::{ServiceId, SessionId, TurnId};
@@ -203,9 +203,21 @@ mod tests {
             assert_eq!(&parsed, event);
         }
 
-        assert!(seen[1].contains(r#""logic":"reasoning""#), "实际 JSON: {}", seen[1]);
-        assert!(seen[2].contains(r#""total_tokens":12"#), "实际 JSON: {}", seen[2]);
-        assert!(seen[3].contains(r#""reason":"completed""#), "实际 JSON: {}", seen[3]);
+        assert!(
+            seen[1].contains(r#""logic":"reasoning""#),
+            "实际 JSON: {}",
+            seen[1]
+        );
+        assert!(
+            seen[2].contains(r#""total_tokens":12"#),
+            "实际 JSON: {}",
+            seen[2]
+        );
+        assert!(
+            seen[3].contains(r#""reason":"completed""#),
+            "实际 JSON: {}",
+            seen[3]
+        );
     }
 
     /// 测试与生成无关的错误其回合标识编码为 `null`。

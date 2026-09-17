@@ -134,10 +134,7 @@ mod tests {
                     },
                 },
             ),
-            ReplyEnvelope::new(
-                "q-4",
-                Reply::ServiceList(ServiceList::default()),
-            ),
+            ReplyEnvelope::new("q-4", Reply::ServiceList(ServiceList::default())),
             ReplyEnvelope::new(
                 "q-5",
                 Reply::SessionCreated {

@@ -78,6 +78,7 @@
 use abs_cancel::TrMayCancel;
 
 use super::error_::ErrorReply;
+use super::handshake_::{ClientInfo, ServerInfo};
 use super::ids_::{SessionId, WorkspaceId};
 use super::request_::{AddWorkspaceRequest, CreateSessionRequest};
 use super::workspace_::{SessionDetail, SessionList, SessionSummary, Workspace, WorkspaceList};
@@ -256,11 +257,32 @@ pub trait TrSessionService: TrKbEndpoint {
     ) -> Self::RemoveSession<'f>;
 }
 
+/// **应用层握手**域：协议要求的第一条请求。
+///
+/// 对应协议里的 `Request::Hello` / `Reply::Hello`。它与"系统层握手"的区别见
+/// [`handshake_`](crate::v1::desktop) 的模块文档：
+///
+/// - 系统层解决「找得到、连得上」，格式由传输实现决定；
+/// - 本 trait 解决「谈得成」，是**可以开始发业务请求**的分界线。
+///
+/// 因此任何客户端（直连本机 IPC 的、经 `kb_core_rproxy` 从局域网过来的）
+/// 都必须先把它走完。
+pub trait TrHandshake: TrKbEndpoint {
+    /// [`TrHandshake::hello`] 返回的可取消 future。
+    type Hello<'f>: TrMayCancel<'f, MayCancelOutput = Result<ServerInfo, RpcError<Self::Error>>>
+    where
+        Self: 'f;
+
+    /// 自报身份（名字 + 版本 + 协议版本），取回服务端的身份。
+    fn hello<'f>(&'f self, client: ClientInfo) -> Self::Hello<'f>;
+}
+
 /// 全部按域 trait 的**组合**：`kb_core` 的业务实现与 `kb_svc_servo_ipc` 的客户端
 /// 代理都实现它，服务端派发层则只要求这一个约束。
 ///
 /// 有一个 blanket 实现，因此实现方只要把各个按域 trait 实现了，就自动满足它。
 /// 随着域的增加（设置 / 目录 / 生成 / 事件订阅），这里跟着加父 trait 即可。
-pub trait TrKbService: TrKbEndpoint + TrWorkspaceService + TrSessionService {}
+pub trait TrKbService: TrKbEndpoint + TrHandshake + TrWorkspaceService + TrSessionService {}
 
-impl<T> TrKbService for T where T: TrKbEndpoint + TrWorkspaceService + TrSessionService {}
+impl<T> TrKbService for T where T: TrKbEndpoint + TrHandshake + TrWorkspaceService + TrSessionService
+{}

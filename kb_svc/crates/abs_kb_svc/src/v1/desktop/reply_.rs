@@ -88,7 +88,10 @@ mod tests {
             },
         };
         let json = serde_json::to_string(&workspace_reply).expect("应当能序列化");
-        assert!(json.starts_with(r#"{"WorkspaceAdded""#), "实际 JSON: {json}");
+        assert!(
+            json.starts_with(r#"{"WorkspaceAdded""#),
+            "实际 JSON: {json}"
+        );
         let parsed: Reply = serde_json::from_str(&json).expect("应当能反序列化");
         assert_eq!(parsed, workspace_reply);
 
@@ -103,7 +106,10 @@ mod tests {
             },
         };
         let json = serde_json::to_string(&session_reply).expect("应当能序列化");
-        assert!(json.starts_with(r#"{"SessionCreated""#), "实际 JSON: {json}");
+        assert!(
+            json.starts_with(r#"{"SessionCreated""#),
+            "实际 JSON: {json}"
+        );
         let parsed: Reply = serde_json::from_str(&json).expect("应当能反序列化");
         assert_eq!(parsed, session_reply);
     }

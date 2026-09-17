@@ -34,14 +34,17 @@
 | `IpcReceiver::to_stream()` 能不能在 **compio** 上安全消费？ | 决定连接抽象用 `Stream`（运行时无关）还是自建"IO 线程 + Waker 完成量" | ✅ 可以：等待 300 ms 期间 compio 定时器走 **29** 步；内联 `recv()` 是 **0** 步 |
 | `gen_mcf2` 能不能直接写进 trait / impl？ | 决定按域 trait 的形状（GAT 手写还是宏展开） | ❌ **不能**：宏只作用于模块级自由函数。⇒ trait 必须**手写 GAT**，宏生成的类型用来填那个关联类型。该形状已实测可编译可运行 |
 
-### 0.1 复现方式
+### 0.1 这些数字是怎么来的（本机一次性实验，脚本未入库）
 
-```bash
-bash external/ipc-channel-poc/run-bootstrap-spike.sh 2>&1 \
-  | tee external/ipc-channel-poc/bootstrap-spike-output.txt
-```
+> **不要照着找脚本**。这一轮的 spike 是一个**一次性**的临时工程
+> （当时放在 `external/ipc-channel-poc/`，不属于 workspace，而且整个 `external/`
+> 现在已被 `.gitignore` 忽略）。它验证的是**上游库的行为 + 我们的设计选择**，
+> 不是本仓库的代码，因此没有随仓库发布——这里保留的是**证据**，不是可复现流程。
+>
+> 为什么不把它留下来：它是那套机制的一份**拷贝**（自己的请求类型、自己的客户端），
+> 在真 crate 漂移之后**仍然能跑绿**——一份过期的"绿"比没有更糟。
 
-关键输出（后两组是"顺序"与"并发抢同一个名字"）：
+当时记下的原始输出（那一版的端点名字文件还是固定名，后来改成了「日期 + UUID」）：
 
 ```text
 COMPIO-STREAM   value=1 elapsed=300.940228ms ticker_ticks_during_wait=29
@@ -54,65 +57,37 @@ CLIENT 第 2 次重试后连上
 CLIENT-DONE pid=42 round_trips=2 elapsed=1.373064ms last=Some("1/echo:第 1 问")
 ```
 
-trait 形状的 spike 是 `external/ipc-channel-poc/src/trait_spike.rs`：
+两组客户端的差别是刻意的：顺序那组只证明"能接连服务"，**并发那组才是重点**——
+3 个客户端同时抢同一个已公布的端点，只有一个能连上，另外两个必须走重试路径，
+实测能收敛（分别重试 1 次与 2 次）。
 
-```bash
-cd external/ipc-channel-poc
-CARGO_HOME="$PWD/../cargo-home" cargo run --bin trait-spike
-# PLAIN     names=["笔记", "资料"]
-# CANCELLABLE names=["笔记", "资料"]
-# CANCELLED  outcome=Err(SpikeError)
-# TRAIT-SPIKE-DONE
+trait 形状那一组（`gen_mcf2` + 手写 GAT）当时的输出：
+
+```text
+PLAIN      names=["笔记", "资料"]
+CANCELLABLE names=["笔记", "资料"]
+CANCELLED  outcome=Err(SpikeError)
+TRAIT-SPIKE-DONE
 ```
 
 它证明了三件事：trait 里可以声明受 `TrMayCancel` 约束的 GAT；
 `gen_mcf2` 生成的类型可以当作那个 GAT 的实现；调用方既能 `.await`，
 也能 `.may_cancel_with(token).await`。
 
-### 0.2 依赖的准确坐标（已在 spike 里解析成功）
+### 0.2 这些结论现在是靠什么守着的
 
-| crate | 坐标 | 解析到的版本 |
+结论本身已经是代码与文档的一部分，**不依赖上面那个实验**：
+
+| 结论 | 落位（都被跟踪） | 守着它的测试 |
 | :--- | :--- | :--- |
-| `abs_cancel` | `git = "https://gitee.com/lino_snsalias/abs_cancel-rs.git"`, `branch = "dev/0.2.0"` | `0.2.0`（`#f1275690`） |
-| `gen_mcf2` | `git = "https://gitee.com/lino_snsalias/gen_mcf2.rs.git"`（默认分支） | `0.2.0`（`#23f34932`） |
+| 引导 = 重建端点 + 重发名字 + 客户端重试 | `kb_svc_servo_ipc/src/{rendezvous_,listener_}.rs`、`src/lib.rs` 的模块文档 | `kb_svc_servo_ipc/tests/round_trip.rs::client_retries_until_the_server_publishes_`、`::a_second_client_is_served_after_the_first_disconnects_` |
+| 应用层握手必须真的走一遍（含版本校验） | `abs_kb_svc/src/v1/desktop/handshake_.rs`、`kb_core/src/ipc_.rs` | `kb_svc_servo_ipc/tests/round_trip.rs::application_handshake_round_trips_and_rejects_version_mismatch_` |
+| `gen_mcf2` 不能写进 trait ⇒ 手写 GAT | `abs_kb_svc/src/v1/desktop/rpc_.rs` 的模块文档 | `abs_kb_svc/tests/rpc_contract.rs`（用同一套写法，形状不对就编译不过） |
+| 阻塞不得进入异步执行器 | `abs_kb_svc/README.md` §5 第 1、2 条 | **没有**直接回归测试，见下 |
 
-`gen_mcf2` 目前在仓库里**没有任何 `Cargo.toml` 声明过**——根 `Cargo.toml` 的
-`[workspace.dependencies]` 里没有它，只有 `abs_cancel`。落地方案 B 需要把它加上。
-
-解析到的 `abs_cancel` v0.2 形状（与较早的 0.2.0 提交不同，**以这个为准**）：
-
-```rust
-pub trait TrMayCancel<'a>
-where
-    Self: 'a + IntoFuture<Output = Self::MayCancelOutput>,
-{
-    type MayCancelFuture<'f, C>: IntoFuture<Output = Self::MayCancelOutput>
-    where
-        'f: 'a,
-        Self: 'f,
-        C: 'f + TrCancellationToken;
-
-    type MayCancelOutput;
-
-    fn may_cancel_with<C>(self, cancel: C) -> Self::MayCancelFuture<'a, C>
-    where
-        C: 'a + TrCancellationToken;
-}
-
-pub trait TrCancellationToken
-where
-    Self: Send + Sync,
-{
-    type Cancellation: Future;
-    type ChildToken: TrCancellationToken + Sized;
-    fn is_cancelled(&self) -> bool;
-    fn can_be_cancelled(&self) -> bool;
-    fn child_token(&self) -> Self::ChildToken;
-    fn cancellation(self) -> Self::Cancellation;
-}
-```
-
----
+> "执行器不被饿死"这一条目前只靠**文档与约定**：当时那个"等待期间跑计时器、
+> 数它走了多少步"的做法完全可以写成一条常驻回归测试，但**尚未做**。
+> 想补的话，它属于 `kb_svc_servo_ipc` 的测试，而不是留在 spike 里。
 
 ## 1. 已经确定、不必再讨论的部分
 

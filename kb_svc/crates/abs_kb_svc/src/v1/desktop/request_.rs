@@ -215,10 +215,7 @@ mod tests {
 
         let json = serde_json::to_string(&request).expect("应当能序列化");
         assert!(json.starts_with(r#"{"Ask""#), "实际 JSON: {json}");
-        assert!(
-            json.contains(r#""service_id":null"#),
-            "实际 JSON: {json}"
-        );
+        assert!(json.contains(r#""service_id":null"#), "实际 JSON: {json}");
 
         let parsed: Request = serde_json::from_str(&json).expect("应当能反序列化");
         assert_eq!(parsed, request);

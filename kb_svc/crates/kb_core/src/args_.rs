@@ -34,6 +34,10 @@ kb-core —— 知识库主进程
     --runtime-dir <目录>  运行时目录（下一轮的 IPC 端点放在这里）。
                           默认 $XDG_RUNTIME_DIR/llm_kb，未设置时回退系统临时目录。
     --storage-dir <目录>  工作区与会话的存储目录。默认 <运行时目录>/storage。
+    --handshake-prompt <方式>
+                          启动时如何把 IPC 端点文件名通知给父进程。
+                          none（默认）：不通知，stdout 保持干净。
+                          stdio：往 stdout 打一行 JSON 通知，供启动它的父进程读取。
     -h, --help            打印本说明。
 
 子命令:
@@ -56,8 +60,40 @@ pub struct Parsed {
     /// 运行时目录与存储目录。
     pub paths: Paths,
 
+    /// 启动时如何把 IPC 端点文件名通知给父进程。
+    pub handshake_prompt: HandshakePrompt,
+
     /// 要执行的动作。
     pub command: Command,
+}
+
+/// 启动时把 IPC 端点文件名通知给父进程的方式。
+///
+/// 这属于**系统层握手**（"父进程怎么知道连哪里"），不是协议里的应用层握手；
+/// 具体通知格式由本 crate 决定，不进 `abs_kb_svc`。
+/// 分工见 `abs_kb_svc::v1::desktop::handshake_` 的模块文档。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HandshakePrompt {
+    /// 不通知（默认）：stdout 一个字都不多。
+    #[default]
+    None,
+
+    /// 往 stdout 打一行机器可读的通知（见 `serve_::run`），供父进程读取。
+    Stdio,
+}
+
+impl HandshakePrompt {
+    /// 从命令行取值解析。
+    fn parse_(value: &str) -> Result<Self, UsageError> {
+        match value {
+            "none" => Ok(Self::None),
+            "stdio" => Ok(Self::Stdio),
+            other => Err(UsageError::InvalidOptionValue {
+                option: "handshake-prompt",
+                value: other.to_string(),
+            }),
+        }
+    }
 }
 
 /// 运行时目录与存储目录。
@@ -186,6 +222,16 @@ pub enum UsageError {
     #[error("未知选项: {0}（用 --help 查看用法）")]
     UnknownOption(String),
 
+    /// 某个选项的取值不合法。
+    #[error("选项 --{option} 的取值不合法: {value:?}（可用值见 --help）")]
+    InvalidOptionValue {
+        /// 选项名（不含前导 `--`）。
+        option: &'static str,
+
+        /// 被拒绝的取值。
+        value: String,
+    },
+
     /// 选项后面没有取值。
     #[error("选项 {0} 缺少取值")]
     MissingValue(String),
@@ -247,6 +293,7 @@ where
     let mut index = 0;
     let mut runtime_dir = None;
     let mut storage_dir = None;
+    let mut handshake_prompt = HandshakePrompt::None;
 
     while index < tokens.len() {
         match tokens[index].as_str() {
@@ -266,9 +313,15 @@ where
                 )?));
                 index += 2;
             }
+            "--handshake-prompt" => {
+                let value = value_at_(&tokens, index + 1, "--handshake-prompt")?;
+                handshake_prompt = HandshakePrompt::parse_(&value)?;
+                index += 2;
+            }
             "-h" | "--help" => {
                 return Ok(Parsed {
                     paths: resolve_paths_(runtime_dir, storage_dir, xdg_runtime_dir_()),
+                    handshake_prompt,
                     command: Command::Help,
                 });
             }
@@ -287,7 +340,11 @@ where
         parse_command_(&tokens[index..])?
     };
 
-    Ok(Parsed { paths, command })
+    Ok(Parsed {
+        paths,
+        handshake_prompt,
+        command,
+    })
 }
 
 /// 解析子命令部分（`tokens[0]` 是子命令名）。
@@ -772,5 +829,31 @@ mod tests_ {
             let error = parse(argv.clone()).expect_err("应当被拒绝");
             assert_eq!(error, expected, "输入: {argv:?}");
         }
+    }
+
+    /// 测试 `--handshake-prompt` 的默认值与取值。
+    ///
+    /// - 手段：分别解析"不带该选项"、`stdio`、`none`，以及一个非法取值。
+    /// - 判断：前两（三）者的 `handshake_prompt` 依次是 `None`（默认**不打扰**
+    ///   stdout）、`Stdio`、`None`；非法取值返回 `InvalidOptionValue` 并带上原值。
+    #[test]
+    fn handshake_prompt_defaults_to_none_() {
+        let default = parse(argv_(&["--runtime-dir", "/run/kb"])).expect("应当能解析");
+        assert_eq!(default.handshake_prompt, HandshakePrompt::None);
+
+        let stdio = parse(argv_(&["--handshake-prompt", "stdio"])).expect("应当能解析");
+        assert_eq!(stdio.handshake_prompt, HandshakePrompt::Stdio);
+
+        let none = parse(argv_(&["--handshake-prompt", "none"])).expect("应当能解析");
+        assert_eq!(none.handshake_prompt, HandshakePrompt::None);
+
+        let bad = parse(argv_(&["--handshake-prompt", "carrier-pigeon"])).expect_err("非法取值");
+        assert_eq!(
+            bad,
+            UsageError::InvalidOptionValue {
+                option: "handshake-prompt",
+                value: "carrier-pigeon".to_string(),
+            }
+        );
     }
 }
