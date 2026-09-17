@@ -34,6 +34,7 @@
 //! | `error_` | 业务错误 |
 //! | `request_` / `reply_` / `event_` | 三个方向上的消息 |
 //! | `envelope_` | 请求/应答的关联信封 |
+//! | `rpc_` | **按业务域拆分的异步 RPC trait**（`TrWorkspaceService` 等） |
 //!
 //! 导出由本文件统一控制：子模块是私有的，`pub use` 决定对外可见的名字，
 //! 因此**公开路径始终是 `abs_kb_svc::v1::desktop::<类型名>`**，
@@ -109,6 +110,7 @@ mod handshake_;
 mod ids_;
 mod reply_;
 mod request_;
+mod rpc_;
 mod service_;
 mod workspace_;
 
@@ -126,5 +128,6 @@ pub use reply_::Reply;
 pub use request_::{
     AddWorkspaceRequest, AskRequest, CreateSessionRequest, Request, UpsertServiceRequest,
 };
+pub use rpc_::{RpcError, TrKbEndpoint, TrKbService, TrSessionService, TrWorkspaceService};
 pub use service_::{ApiKeyUpdate, MASKED_API_KEY, ServiceList, ServiceSummary};
 pub use workspace_::{SessionDetail, SessionList, SessionSummary, Workspace, WorkspaceList};

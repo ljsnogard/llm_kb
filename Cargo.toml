@@ -5,6 +5,7 @@ members = [
     "kb_svc/crates/abs_llm",
     "kb_svc/crates/kb_core",
     "kb_svc/crates/kb_svc_salvo",
+    "kb_svc/crates/kb_svc_servo_ipc",
 
     "kb_plugins/crates/kb_rig_llm_v1_adapt",
     "kb_plugins/crates/kb_rig_llm_v1_agent",
@@ -73,7 +74,10 @@ features = ["fs", "macros", "time"]
 version = "2.0"
 default-features = false
 
-# ── 服务端运行时：kb_svc_salvo 与 kb_core 都在用 ──────────────────────
+# ── 服务端运行时 ────────────────────────────────────────────────────
+#
+# `tokio` 现在**只有** `kb_svc_salvo` 在用（它整体已废弃，待删除）；
+# `kb_core` 已改用上面的 `compio`。等 `kb_svc_salvo` 删除后本条目也应一并删除。
 [workspace.dependencies.tokio]
 version = "1.*"
 features = [

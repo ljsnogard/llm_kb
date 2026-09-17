@@ -40,6 +40,10 @@ pub enum ErrorCode {
 /// 作为 [`Reply::Error`](crate::v1::desktop::Reply::Error) 的载荷返回给请求方；
 /// 与生成过程相关、需要主动推送的错误另外走
 /// [`Event::Error`](crate::v1::desktop::Event::Error)。
+///
+/// 它同时实现 [`core::error::Error`]，这样按域 RPC trait 可以直接拿它当
+/// "业务失败"那一个分支（见 [`RpcError::Business`](crate::v1::desktop::RpcError::Business)），
+/// 而不必为每种实现再包一层。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorReply {
     /// 错误类别。
@@ -48,6 +52,19 @@ pub struct ErrorReply {
     /// 面向用户的说明。
     pub message: String,
 }
+
+impl core::fmt::Display for ErrorReply {
+    /// 只打印面向用户的说明。
+    ///
+    /// 类别不参与 `Display`：它已经在 [`ErrorReply::code`] 里，日志里需要时
+    /// 用 `{:?}` 打印整个结构即可；把类别拼进这句人话里反而会让界面上
+    /// 显示的文案多出一段机器词。
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl core::error::Error for ErrorReply {}
 
 #[cfg(test)]
 mod tests {
@@ -65,7 +82,10 @@ mod tests {
         };
 
         let json = serde_json::to_string(&error).expect("应当能序列化");
-        assert!(json.contains(r#""code":"missing_api_key""#), "实际 JSON: {json}");
+        assert!(
+            json.contains(r#""code":"missing_api_key""#),
+            "实际 JSON: {json}"
+        );
 
         let parsed: ErrorReply = serde_json::from_str(&json).expect("应当能反序列化");
         assert_eq!(parsed, error);

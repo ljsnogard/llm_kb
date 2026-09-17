@@ -18,6 +18,11 @@
 
 ## 1. 当前进度
 
+> **⚠️ 本节整体属于 salvo 路线，该路线已废弃**（进程间通信改走 IPC，
+> 见 §2.1 的取代说明与 [`abs_kb_svc-20260917-1254.md`](dev-notes/abs_kb_svc-20260917-1254.md)）。
+> 下表保留作为历史记录；`kb_core` 的新状态见 §7 与
+> [`kb_core-20260917-1527.md`](dev-notes/kb_core-20260917-1527.md)。
+
 | 能力 | 状态 | 说明 |
 | :--- | :---: | :--- |
 | 双监听器（TCP + Unix domain socket） | ✅ | 同一份路由表，见 `kb_svc_salvo::server` |
@@ -25,7 +30,7 @@
 | 仿 DSH 聊天界面 + 增量渲染 | ✅ | `kb_svc_salvo/src/web/assets/` |
 | LLM 服务与 API key 配置（文件 + 界面） | ✅ | `kb_svc_salvo::settings` |
 | 浏览器 ↔ 插件两段转发 | ✅ | `kb_svc_salvo::hub` / `wire` / `plugin` / `web_ws` |
-| 启动编排与优雅退出 | ✅ | `kb_svc_salvo::launch`（`kb_core` 唯一入口） |
+| 启动编排与优雅退出 | ✅ | `kb_svc_salvo::launch`（`kb_core` 曾唯一入口，**已解耦**） |
 | `kb_rig_llm_v1_agent`（rig 直连 LLM） | 🚧 | 由原 `kb_rig_llm` 改名；本阶段实现 |
 | `kb_rig_llm_v1_adapt`（rig → `abs_llm::v1`） | 🚧 | 本阶段新增 |
 | 浏览器侧帧格式统一为 `abs_llm::v1` | 🚧 | 本阶段改造 `wire.rs` |
@@ -130,17 +135,18 @@ function_call / dynamic_search_call / static_search_call）、`FinishReason`、
 
 | 主题 | 落位 |
 | :--- | :--- |
-| 进程分工、`kb_svc_salvo` 只做库、启动编排只在 `launch` | `kb_svc_salvo/src/launch.rs` 模块文档；`kb_core/src/main.rs` 模块文档 |
-| 双监听器、一份路由表、监听地址与权限 | `kb_svc_salvo/src/server.rs` 模块文档 |
-| UDS 上跑 WebSocket 的验证与结论 | `kb_svc_salvo/src/poc.rs` 模块文档 + `tests/poc_uds_websocket.rs` |
-| socket 文件名（日期 + UUID）、权限、清理 | `kb_svc_salvo/src/plugin_socket.rs` 模块文档 |
-| 两段线协议的全部帧与字段 | `kb_svc_salvo/src/wire.rs` 模块文档 |
-| 会话状态、广播、错误类别 | `kb_svc_salvo/src/hub.rs` 模块文档 |
-| 用户配置的路径、格式、注释保留、安全取舍 | `kb_svc_salvo/src/settings.rs` 模块文档 |
-| HTTP 路由表 | `kb_svc_salvo/src/web.rs` 模块文档 |
-| 前端资源目录、内嵌与 `--assets-dir` 覆盖 | `kb_svc_salvo/src/assets.rs` 模块文档 |
-| 仿 DSH 的观感取舍与增量渲染策略 | `web/assets/app.css` 与 `web/assets/app.js` 顶部注释 |
+| ~~进程分工、`kb_svc_salvo` 只做库、启动编排只在 `launch`~~ | **已废弃**：`kb_core` 不再依赖 `kb_svc_salvo`，改自带 compio 骨架，见 `kb_core/src/serve_.rs` 与 §7 |
+| 双监听器、一份路由表、监听地址与权限 | `kb_svc_salvo/src/server.rs` 模块文档（随该路线废弃） |
+| UDS 上跑 WebSocket 的验证与结论 | `kb_svc_salvo/src/poc.rs` 模块文档 + `tests/poc_uds_websocket.rs`（随该路线废弃） |
+| socket 文件名（日期 + UUID）、权限、清理 | `kb_svc_salvo/src/plugin_socket.rs` 模块文档（随该路线废弃） |
+| 两段线协议的全部帧与字段 | `kb_svc_salvo/src/wire.rs` 模块文档（随该路线废弃） |
+| 会话状态、广播、错误类别 | `kb_svc_salvo/src/hub.rs` 模块文档（随该路线废弃） |
+| 用户配置的路径、格式、注释保留、安全取舍 | `kb_svc_salvo/src/settings.rs` 模块文档（随该路线废弃） |
+| HTTP 路由表 | `kb_svc_salvo/src/web.rs` 模块文档（随该路线废弃） |
+| 前端资源目录、内嵌与 `--assets-dir` 覆盖 | `kb_svc_salvo/src/assets.rs` 模块文档（随该路线废弃） |
+| 仿 DSH 的观感取舍与增量渲染策略 | `web/assets/app.css` 与 `web/assets/app.js` 顶部注释（随该路线废弃） |
 | 依赖分层（哪些放 workspace、哪些放各自 crate） | 根 `Cargo.toml` 与各 crate `Cargo.toml` 的注释 |
+| 工作区 / 会话的本地文件布局、标识校验、原子写 | `kb_core/src/store_/mod.rs` 模块文档 |
 | 命令行参数、环境变量、实测命令与预期结果 | `kb_core/README.md` |
 
 ## 4. 尚未决策的事项
@@ -158,13 +164,17 @@ function_call / dynamic_search_call / static_search_call）、`FinishReason`、
 6. **多会话**：当前是单会话内存态。协议里的 `turn_id` 是否需要升级为
    `session_id` + `turn_id`？既然上下文现在归 agent 所有，这一步需要和
    agent 侧的会话管理一起设计。
-7. **`kb_core` 与 `kb_svc_salvo` 的最终拆分边界**：现在两者「视为一体」，
-   将来拆开时哪些模块留在服务库、哪些上移到核心进程？
+7. ~~**`kb_core` 与 `kb_svc_salvo` 的最终拆分边界**~~ → ✅ **已关闭**：
+   两者不再是"视为一体"的关系，`kb_core` 已**删除对 `kb_svc_salvo` 的依赖**
+   （同时也删掉了 tokio），自带 compio 骨架与本地文件存储。
+   见 §7 与 [`kb_core-20260917-1527.md`](dev-notes/kb_core-20260917-1527.md)。
 8. **多 provider 的配置形态**：`settings.rs` 目前用 `provider` 字符串 +
    `base_url` + `model` 描述服务。rig 各 provider 的构造参数不同（有的要
    `base_url`，有的要 region），是否需要 per-provider 的配置结构？
 
 ## 5. 剩余工作
+
+> **⚠️ 本表是 salvo 路线的剩余工作，已随该路线废弃**；新路线的下一步见 §7。
 
 | 阶段 | 内容 | 估时 |
 | :---: | :--- | :---: |
@@ -203,3 +213,60 @@ CARGO_HOME="$PWD/external/cargo-home" cargo test --workspace
 `.gitignore` 中已按 `external/cargo-home/` 忽略它。
 
 这属于本机沙箱限制，不是项目配置问题；正常开发机上无需这样处理。
+
+## 7. 新路线：IPC + `kb_core` 自理存储
+
+salvo 路线废弃后，当前的推进方向是：
+
+```text
+kb_admin_desktop / kb_plugins
+        │  abs_kb_svc::v1::desktop（业务语义 + 异步 RPC 接口，与运行时无关）
+        ▼
+   kb_svc_servo_ipc            ← 尚未实现（ipc-channel 落地）
+        ▼
+     kb_core                  ← 已完成：compio 骨架 + 本地文件存储 + 临时 CRUD 命令行
+```
+
+**已经完成的一步**（2026-09-17）：
+`kb_core` 删除对 `kb_svc_salvo` 与 `tokio` 的依赖，改用 compio；
+工作区与会话先用运行时目录下的本地文件存储（布局与约定见
+`kb_core/src/store_/mod.rs`）；README 重写为"命令行优先"。
+完整决策记录见 [`kb_core-20260917-1527.md`](dev-notes/kb_core-20260917-1527.md)。
+
+**正在进行的一步**（2026-09-17）：`kb_svc_servo_ipc` 的落地方案。
+三个会决定公开 API 形状的未知数已经用 spike 实测掉：
+
+- 多客户端引导 = **每接受一个就重建 one-shot server + 原子重发名字 + 客户端重试**
+  （顺序 3/3、并发 3/3，含两次真实重试）；
+- `IpcReceiver::to_stream()` 在 compio 上可用（等待 300 ms 期间定时器走 29 步），
+  而内联 `recv()` 会让它走 0 步——compio 的运行时是 thread-local，禁不起一次阻塞；
+- `gen_mcf2` **不能**写进 trait（只作用于模块级自由函数），因此按域 trait 走
+  "手写 GAT + 宏生成的具体类型来填"这条路，该形状已实测可编译可运行。
+
+验证脚本与输出：`external/ipc-channel-poc/run-bootstrap-spike.sh`、
+`external/ipc-channel-poc/src/trait_spike.rs`。
+
+**分层已定**：走**方案 B**——先在 `abs_kb_svc` 立按业务域拆分的异步 RPC trait，
+再由 `kb_svc_servo_ipc` 落地实现。第一批（`TrKbEndpoint` / `RpcError` /
+`TrWorkspaceService` / `TrSessionService` / `TrKbService`）已落到
+`kb_svc/crates/abs_kb_svc/src/v1/desktop/rpc_.rs`，并有 6 项契约测试
+（`tests/rpc_contract.rs`，含一份用 `gen_mcf2` 写的 mock 实现）。
+
+**已经打通的一步**（2026-09-17）：`kb_svc_servo_ipc` 已建，
+`kb_core` 已接上并在真实存储上跑通一轮增删查改——
+
+- 服务端：`Listener::bind(runtime_dir)` → `spawn_blocking(accept)` →
+  `Connection::serve(&KbService)`，`KbService` 把七个方法转发给 `store_::Store`；
+- 客户端：`Client::connect(runtime_dir)` 实现同样的按域 trait，
+  调用方写 `client.list_workspaces().await` 即可；
+- 引导：`<runtime-dir>/kb-core.ipc` 存端点名字，服务端每接受一个客户端就重建
+  one-shot 端点并重发名字，客户端带重试；
+- 端到端用例 `kb_core::ipc_::tests_::ipc_round_trip_reaches_the_local_store_`
+  真起服务端、真走 ipc-channel、真落盘。
+
+`CARGO_HOME="$PWD/external/cargo-home" cargo test --workspace` ⇒ **140 项全绿**；
+`cargo clippy --workspace --all-targets` 无告警。
+
+**下一步**：其余业务域（握手 / 设置 / 目录 / 生成 + 事件流）的按域 trait
+与派发；并发服务多个客户端；优雅退出。
+完整方案与进展见 [`kb_svc_servo_ipc-20260917-1548.md`](dev-notes/kb_svc_servo_ipc-20260917-1548.md)。

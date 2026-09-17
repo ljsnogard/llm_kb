@@ -7,10 +7,37 @@ description = "The core process of KnowledgeBase service."
 
 # 只属于本 crate 的依赖直接写在这里；只有跨成员共用的依赖才放 workspace。
 [dependencies]
+# 可取消 future 的抽象与宏：`src/ipc_.rs` 里的服务端实现用它展开。
+abs_cancel = { workspace = true }
+gen_mcf2 = { git = "https://gitee.com/lino_snsalias/gen_mcf2.rs.git" }
+
+# 协议数据（工作区 / 会话 / 消息）的唯一定义处。存储格式直接复用这些类型，
+# 不在此处镜像第二套结构。
+abs_kb_svc = { path = "../abs_kb_svc" }
+
+# 进程间通信的落地实现：`kb_core` 是它的服务端。
+kb_svc_servo_ipc = { path = "../kb_svc_servo_ipc" }
+
+# 会话标题缺省时要从首条用户消息推导，因此需要 `Role` 等对话词汇。
+abs_llm = { path = "../abs_llm" }
+
+# 异步运行时。取代原先的 tokio：kb_core 现在是 compio 驱动的进程，
+# 本地存储的文件读写走 `compio::fs`（见 `src/store_/mod.rs`）。
+compio = { workspace = true }
+
 env_logger = { version = "0.11.*" }
-kb_svc_salvo = { path = "../kb_svc_salvo" }
 log = { workspace = true }
-tokio = { workspace = true }
+
+# 本地文件存储的序列化格式。存储内容是协议类型的 JSON 表示。
+serde = { version = "1.*", default-features = false }
+serde_json = { version = "1.*" }
+
+# 错误类型（`StoreError` / `UsageError`）的样板代码。
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# 单元测试用真实临时目录，避免污染用户目录，也避免测试之间互相干扰。
+tempfile = { version = "3.*" }
 
 [[bin]]
 name = "kb-core"

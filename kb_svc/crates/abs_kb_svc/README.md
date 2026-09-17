@@ -3,15 +3,22 @@
 知识库服务的 **业务通信抽象层**：定义各插件与 `kb_core` 通信的抽象代码接口、通信内容，
 以及一个**与异步运行时无关的异步 RPC 业务接口**。
 
-> **当前状态：设计提案 + 首批数据定义已落地。**
+> **当前状态：设计提案 + 首批数据定义与首批异步 RPC trait 已落地。**
 > [`src/v1/desktop/`](src/v1/desktop/mod.rs) 已经给出桌面客户端与 `kb_core` 之间的
 > 通信数据（15 个请求 / 11 个应答 / 9 个事件），并有单元测试与文档测试覆盖。
-> 抽象的异步 RPC trait 与插件侧数据（`v1::plugin`）**尚未落地**，
-> 其中的公开 API 属于**对外约定**，按 `AGENTS.md` 第 1 条须经团队确认后才能落到代码。
+> [`src/v1/desktop/rpc_.rs`](src/v1/desktop/rpc_.rs) 已给出**按业务域拆分的异步
+> RPC trait** 的第一批：`TrKbEndpoint`、`RpcError`、`TrWorkspaceService`、
+> `TrSessionService`（工作区与会话的七条增删查改），并由
+> [`tests/rpc_contract.rs`](tests/rpc_contract.rs) 用一份 `gen_mcf2` 展开的 mock
+> 实现守住契约。
+> 其余域（设置 / 目录 / 握手 / 生成 / 事件订阅）与插件侧数据（`v1::plugin`）
+> **尚未落地**，其公开 API 属于**对外约定**，按 `AGENTS.md` 第 1 条须经团队确认后
+> 才能落到代码。
 >
 > 背景、证据与待决策项见：
 > - [`dev-notes/abs_kb_svc-20260917-1254.md`](../../../dev-notes/abs_kb_svc-20260917-1254.md)（定位与选型决策）
 > - [`dev-notes/kb_admin_desktop-20260917-1341.md`](../../../dev-notes/kb_admin_desktop-20260917-1341.md)（客户端通信需求调查）
+> - [`dev-notes/kb_svc_servo_ipc-20260917-1548.md`](../../../dev-notes/kb_svc_servo_ipc-20260917-1548.md)（IPC 落地方案与 trait 形状验证）
 
 ---
 
@@ -101,8 +108,27 @@
 调用者（`kb_core` 自身、插件、桌面客户端）只面向这些 trait 编程；
 不同模块提供不同实现（ipc-channel / socket / 同进程线程 / mock）。
 
+**已落地的第一批**（[`src/v1/desktop/rpc_.rs`](src/v1/desktop/rpc_.rs)）：
+
+| 名字 | 内容 |
+| :--- | :--- |
+| `TrKbEndpoint` | 所有按域 trait 的公共基底，只定义实现方的错误类型 |
+| `RpcError<E>` | 一次调用的失败：`Business(ErrorReply)` / `Transport(E)` 两个变体 |
+| `TrWorkspaceService` | 工作区的增删查（3 个方法） |
+| `TrSessionService` | 会话的增删查改（4 个方法） |
+
+**形状上的要点**（细节见该模块的模块文档）：
+
+- 每个方法声明一个**手写 GAT**并约束到 `abs_cancel::TrMayCancel`，方法本身同步；
+  实现方用 `gen_mcf2::gen_may_cancel_future` 在**模块级**展开出具体 future 类型
+  来填那个 GAT（该宏不能写进 trait / impl）；
+- 本 crate **只依赖 `abs_cancel`，不依赖 `gen_mcf2`**，因此 `kb_core` 的依赖链上
+  没有 `gen_mcf2`（`AGENTS.md` 第 4 条对它的例外依然成立）；
+- 请求载荷进、应答载荷出，纯客户端的簿记字段（`LocalId`）不往返。
+
 **流式内容**（LLM 的增量输出）用 `abs_async_iter::{TrAsyncIterator, TrFlux}` 表达，
 而不是把增量塞进一次请求/应答里——`v1::desktop` 的 `Event` 就是这条流的元素类型。
+承载它的 `TrGeneration` / `TrEventSource` 尚未落地。
 
 ## 5. 实现方必须遵守的契约（硬性）
 
@@ -174,38 +200,55 @@
 4. 全部约束写在 where 子句里，不要内联在泛型参数上；
 5. 最后一个函数参数必须是该取消令牌类型，且**按值**传入。
 
-**示意形状**（尚未落地，不保证编译）：
+**形状已落地**：可编译、可运行的样板见
+[`src/v1/desktop/rpc_.rs`](src/v1/desktop/rpc_.rs) 与
+[`tests/rpc_contract.rs`](tests/rpc_contract.rs)（后者用 `gen_mcf2` 展开了一个 mock
+实现，同时充当实现方要照抄的样板）：
 
 ```rust
-/// 一次会话（ask / cancel）的抽象接口。
-///
-/// `ask_async` 本身是同步函数，只负责构造 future；
-/// 真正的等待发生在返回的 `AskAsync` 上，而它由 `gen_may_cancel_future` 生成。
-pub trait TrSession {
-    type Req;
-    type Resp;
-    type Err: core::error::Error;
-
-    /// 发起一问；取消通过 `Cancel` 语义单独表达，见 §5 第 5 条。
-    type AskAsync<'f>: abs_cancel::TrMayCancel<
+/// trait 侧：手写 GAT、约束到 `TrMayCancel`，方法本身同步。
+pub trait TrWorkspaceService: TrKbEndpoint {
+    type ListWorkspaces<'f>: abs_cancel::TrMayCancel<
             'f,
-            MayCancelOutput = Result<Self::Resp, Self::Err>,
+            MayCancelOutput = Result<WorkspaceList, RpcError<Self::Error>>,
         >
     where
         Self: 'f;
 
-    fn ask_async<'f>(&'f self, request: Self::Req) -> Self::AskAsync<'f>;
+    fn list_workspaces<'f>(&'f self) -> Self::ListWorkspaces<'f>;
 }
 ```
 
-> 完整的 trait 划分（会话 / 设置 / 工作区 / 插件 / 检索各占几个 trait、粒度多粗）
-> 属于待确认事项，见 dev-notes §5。
+```rust
+/// 实现侧：模块级 async fn 交给宏展开，再把生成的类型填进关联类型。
+#[gen_mcf2::gen_may_cancel_future(ListWorkspaces)]
+async fn list_workspaces_async<'s, C>(
+    service: &'s MyService,
+    cancel: C,
+) -> Result<WorkspaceList, RpcError<MyTransportError>>
+where
+    C: abs_cancel::TrCancellationToken,
+{ /* 业务逻辑；必须真的检查 cancel */ }
+
+impl TrWorkspaceService for MyService {
+    type ListWorkspaces<'f> = ListWorkspacesAsync<'f, 'f>;
+
+    fn list_workspaces<'f>(&'f self) -> Self::ListWorkspaces<'f> {
+        ListWorkspacesAsync::new(self)
+    }
+}
+```
+
+> 该形状由 `external/ipc-channel-poc/src/trait_spike.rs` 先行验证；
+> 实现 crate 需要 nightly 的 `#![feature(impl_trait_in_assoc_type)]`。
+> 其余按域 trait 的粒度见
+> [`dev-notes/kb_svc_servo_ipc-20260917-1548.md`](../../../dev-notes/kb_svc_servo_ipc-20260917-1548.md) §3.4。
 
 ## 7. 已知的实现候选
 
 | 实现 crate | 传输 | 状态 |
 | :--- | :--- | :--- |
-| `kb_svc_servo_ipc` | servo/ipc-channel 0.23（跨进程 channel；Unix 走 socketpair + fd 传递，macOS 走 Mach port，Windows 走命名管道） | **已选定**，尚未实现（可行性验证见 dev-notes §3） |
+| `kb_svc_servo_ipc` | servo/ipc-channel 0.23（跨进程 channel；Unix 走 socketpair + fd 传递，macOS 走 Mach port，Windows 走命名管道） | **已实现**：引导（`Listener` / 客户端重试）、三通道连接、`Client` 代理、服务端派发；端到端用例见该 crate 的 `tests/round_trip.rs` 与 `kb_core::ipc_` |
 | `kb_svc_thread`（暂名） | 同进程线程 + 内存队列 | 备选；用于测试或"单进程内跑全部组件"的形态 |
 | `kb_svc_socket`（暂名） | 保留 socket 形态 | 备选；应对未来跨机/跨平台需求 |
 
@@ -244,8 +287,12 @@ pub trait TrSession {
 
 以下问题在本 crate 落地前必须明确（完整清单见 dev-notes §5）：
 
-1. **trait 划分粒度**：一个大 trait 还是按业务域拆成多个；
-2. **`no_std` 与否**：抽象层本身可以用 `core` 表达，但业务数据大概率需要 `alloc`；
+1. ~~**trait 划分粒度**：一个大 trait 还是按业务域拆成多个~~ → **已定**：
+   按**业务域**拆成多个小 trait（工作区 / 会话 / 设置 / 目录 / 生成 / 事件订阅），
+   再加一个 `TrKbEndpoint` 公共基底与一个 `TrKbService` 组合 trait。
+   第一批已落地，见 §4.3 与 [`src/v1/desktop/rpc_.rs`](src/v1/desktop/rpc_.rs)。
+2. **`no_std` 与否**：抽象层本身可以用 `core` 表达，但业务数据大概率需要 `alloc`
+   （事实上已经需要：协议类型里全是 `String` / `Vec<T>`，`serde` 因此必须开 `alloc`）；
 3. **引导/会合机制**：客户端如何找到 `kb_core` 的服务端点（属于实现层，但会影响抽象层的"连接"语义）；
 4. **跨机需求**：是否在近期范围内显式排除；
 5. **`buffex` / `mm_ptr` 的定位**：见 §9 的"现有依赖的遗留问题"；

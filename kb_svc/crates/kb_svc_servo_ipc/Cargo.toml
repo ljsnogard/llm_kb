@@ -1,0 +1,36 @@
+[package]
+edition = "2024"
+name = "kb_svc_servo_ipc"
+version = "0.1.0"
+
+description = "servo/ipc-channel implementation of the KnowledgeBase service IPC layer."
+
+# 只属于本 crate 的依赖直接写在这里；只有跨成员共用的依赖才放 workspace。
+[dependencies]
+# 可取消 future 的抽象与宏。
+abs_cancel = { workspace = true }
+gen_mcf2 = { git = "https://gitee.com/lino_snsalias/gen_mcf2.rs.git" }
+
+# 业务通信抽象层：本 crate 是它选定的实现（协议数据 + 按域 RPC trait）。
+abs_kb_svc = { path = "../abs_kb_svc" }
+
+# 上游的进程间 channel。`async` feature 提供 `IpcReceiver::to_stream()`——
+# 它把阻塞收敛到 ipc-channel 自己的进程级 router 线程，业务侧的 await 不阻塞。
+ipc-channel = { version = "0.23.0", features = ["async"] }
+
+# 请求 → 应答的完成量：运行时无关的 oneshot（不用 futures 的完整套件）。
+futures-channel = "0.3"
+
+# `Stream` / `StreamExt`：消费 `IpcStream`、拼事件流。
+futures-lite = { workspace = true }
+
+log = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# 端到端测试要造临时 runtime 目录。
+tempfile = { version = "3.*" }
+
+# 继承根 Cargo.toml 的 [workspace.lints]（见那里的说明）。
+[lints]
+workspace = true

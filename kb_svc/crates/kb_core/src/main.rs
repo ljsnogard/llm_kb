@@ -1,204 +1,102 @@
 //! # kb_core
 //!
-//! 知识库主进程的可执行入口。
+//! 知识库**主进程**。
 //!
-//! 本 crate 只做三件事：
+//! 本 crate 负责：
 //!
-//! 1. 解析命令行参数；
-//! 2. 初始化日志；
-//! 3. 调用 [`kb_svc_salvo::launch::launch`]，把参数原样交给它。
+//! 1. 解析命令行参数（[`args_`]）；
+//! 2. 准备运行时目录，并打开工作区 / 会话的本地文件存储（[`store_`]）；
+//! 3. 把存储接上 IPC（[`ipc_`]），常驻服务客户端（[`serve_`]）；
+//! 4. 另外提供一组**临时**的 CRUD 子命令（[`cli_`]），便于不开客户端时手工检验。
 //!
-//! **其余一切**——配置文件的读取与生成、监听绑定、socket 文件的生成与清理、
-//! 信号处理与优雅退出——都由 `kb_svc_salvo` 负责，见
-//! `kb_svc/crates/kb_svc_salvo/src/launch.rs` 的模块文档。
+//! # 异步运行时是 compio
+//!
+//! 本进程曾由 `kb_svc_salvo` 启动、跑在 tokio 上。现在两者都已移除：
+//! HTTP / WebSocket 那套通道整体废弃，进程间通信改由 `kb_svc_servo_ipc`
+//! 承担；运行时换成 [compio](https://crates.io/crates/compio)，
+//! 本地文件读写走 `compio::fs`，阻塞的 `accept()` 走 `spawn_blocking`。
+//!
+//! # 工作区与会话存在哪里
+//!
+//! 暂时用本地文件代替 Turso：数据放在 `--storage-dir`（默认 `<运行时目录>/storage`），
+//! 布局与约定见 [`store_`] 的模块文档。文件内容就是
+//! `abs_kb_svc::v1::desktop` 里协议类型的 JSON——存储格式与线上格式同源。
+//!
+//! # 客户端怎么找到它
+//!
+//! 端点名字写在 `<运行时目录>/kb-core.ipc`；客户端（`kb_svc_servo_ipc::Client`）
+//! 读这个名字连上来，见 [`kb_svc_servo_ipc::name_file_in`] 与
+//! [`serve_`] 的模块文档。
 //!
 //! # 用法
 //!
 //! ```text
-//! kb_core [--config <file>] [--runtime-dir <dir>] [--assets-dir <dir>] [tcp_addr]
+//! kb-core [--runtime-dir <目录>] [--storage-dir <目录>] [<子命令>]
 //! ```
 //!
-//! - `tcp_addr`：用户侧 HTTP 监听地址，缺省 `127.0.0.1:8788`；端口写 `0` 表示由系统分配。
-//! - `--config`：配置文件路径，缺省 `$XDG_CONFIG_HOME/llm_kb/config.toml`。
-//! - `--runtime-dir`：插件通道 socket 的存放目录，缺省 `$XDG_RUNTIME_DIR/llm_kb`。
-//! - `--assets-dir`：前端资源覆盖目录（开发期用），缺省使用编译期内嵌资源。
-//!
-//! 更完整的操作手册见本 crate 的 `README.md`。
+//! 完整说明见 [`args_::USAGE`]，操作手册见本 crate 的 `README.md`。
 
-use kb_svc_salvo::launch::{LaunchConfig, launch};
-use log::warn;
+// `kb_svc_servo_ipc` 与 `ipc_` 里的 `gen_mcf2` 展开产物需要它。
+#![feature(impl_trait_in_assoc_type)]
+// `gen_mcf2` 会把 `async fn` 上**显式声明**的生命周期做成生成类型的泛型参数，
+// 所以 `ipc_` 里那些 `'s` 不能省略——省略之后 clippy 的 `needless_lifetimes`
+// 反而是错的建议。
+#![allow(clippy::needless_lifetimes)]
 
-/// 被覆盖的启动参数。
+mod args_;
+mod cli_;
+mod error_;
+mod ipc_;
+mod serve_;
+mod store_;
+
+use std::process::ExitCode;
+
+use log::error;
+
+use args_::{Command, Parsed};
+use error_::CoreError;
+
+/// 进程入口。
 ///
-/// 字段都是 `Option`：`None` 表示「用 `kb_svc_salvo` 的默认值」，本 crate 不重复
-/// 定义这些默认值，避免两处默认值随时间漂移。
-#[derive(Debug, Default, PartialEq, Eq)]
-struct Args {
-    /// 用户侧监听地址。
-    tcp_addr: Option<String>,
-
-    /// 配置文件路径。
-    config_path: Option<std::path::PathBuf>,
-
-    /// 运行时目录。
-    runtime_dir: Option<std::path::PathBuf>,
-
-    /// 前端资源覆盖目录。
-    assets_dir: Option<std::path::PathBuf>,
-}
-
-/// 解析命令行参数。
+/// 无子命令时进入常驻服务（[`serve_::run`]）；带子命令时执行一次增删查改后退出
+/// （[`cli_::run_workspace`] / [`cli_::run_session`]）。
 ///
-/// 参数顺序不敏感，未知参数会被忽略并打印警告。
-fn parse_args<I>(argv: I) -> Args
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = Args::default();
-    let mut iter = argv.into_iter();
-
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--config" => match iter.next() {
-                Some(value) => args.config_path = Some(value.into()),
-                None => warn!("--config 缺少取值，已忽略"),
-            },
-            "--runtime-dir" => match iter.next() {
-                Some(value) => args.runtime_dir = Some(value.into()),
-                None => warn!("--runtime-dir 缺少取值，已忽略"),
-            },
-            "--assets-dir" => match iter.next() {
-                Some(value) => args.assets_dir = Some(value.into()),
-                None => warn!("--assets-dir 缺少取值，已忽略"),
-            },
-            other if other.starts_with('-') => warn!("忽略未知参数: {other}"),
-            addr => {
-                if args.tcp_addr.is_some() {
-                    warn!("重复的监听地址参数，已忽略: {addr}");
-                } else {
-                    args.tcp_addr = Some(addr.to_string());
-                }
-            }
-        }
-    }
-
-    args
-}
-
-/// 把命令行参数翻译成 `kb_svc_salvo` 的启动配置。
-fn to_launch_config(args: Args) -> LaunchConfig {
-    let mut config = LaunchConfig::new();
-
-    if let Some(addr) = args.tcp_addr {
-        config = config.with_tcp_addr(addr);
-    }
-    if let Some(path) = args.config_path {
-        config = config.with_config_path(path);
-    }
-    if let Some(dir) = args.runtime_dir {
-        config = config.with_runtime_dir(dir);
-    }
-    if let Some(dir) = args.assets_dir {
-        config = config.with_assets_dir(dir);
-    }
-
-    config
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// 退出码：`0` 成功，`1` 运行期失败，`2` 参数错误（常驻服务被信号终止时由信号决定）。
+#[compio::main]
+async fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let config = to_launch_config(parse_args(std::env::args().skip(1)));
+    let parsed = match args_::parse(std::env::args().skip(1)) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            eprintln!("参数错误: {error}");
+            eprintln!("{}", args_::USAGE);
+            return ExitCode::from(2);
+        }
+    };
 
-    launch(config).await?;
-
-    Ok(())
+    match dispatch_(parsed).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            error!("{error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 测试参数解析正确识别全部四个选项。
-    ///
-    /// - 手段：把一组参数以 `String` 迭代器的形式传给 `parse_args`，顺序打乱以验证
-    ///   解析与顺序无关。
-    /// - 判断：返回的 `Args` 与预期完全相等。
-    #[test]
-    fn parse_args_reads_all_options() {
-        let args = parse_args(
-            [
-                "--assets-dir",
-                "/tmp/assets",
-                "127.0.0.1:9999",
-                "--config",
-                "/tmp/kb.toml",
-                "--runtime-dir",
-                "/run/kb",
-            ]
-            .into_iter()
-            .map(String::from),
-        );
-
-        assert_eq!(
-            args,
-            Args {
-                tcp_addr: Some("127.0.0.1:9999".to_string()),
-                config_path: Some("/tmp/kb.toml".into()),
-                runtime_dir: Some("/run/kb".into()),
-                assets_dir: Some("/tmp/assets".into()),
-            }
-        );
-    }
-
-    /// 测试缺省参数时四个字段都为空，由 `kb_svc_salvo` 补默认值。
-    ///
-    /// - 手段：传入空参数列表。
-    /// - 判断：`Args` 等于 `Default`。
-    #[test]
-    fn parse_args_defaults_to_empty() {
-        assert_eq!(parse_args(std::iter::empty()), Args::default());
-    }
-
-    /// 测试未知参数与重复地址不会破坏解析结果。
-    ///
-    /// - 手段：传入一个未知开关、两次重复的监听地址，以及缺少取值的 `--config`。
-    /// - 判断：第一个监听地址被保留，`config_path` 保持为 `None`，解析过程不 panic。
-    #[test]
-    fn parse_args_tolerates_unknown_and_duplicate() {
-        let args = parse_args(
-            ["--nope", "127.0.0.1:1", "127.0.0.1:2", "--config"]
-                .into_iter()
-                .map(String::from),
-        );
-
-        assert_eq!(
-            args,
-            Args {
-                tcp_addr: Some("127.0.0.1:1".to_string()),
-                config_path: None,
-                runtime_dir: None,
-                assets_dir: None,
-            }
-        );
-    }
-
-    /// 测试只有被显式指定的参数才会进入 `LaunchConfig`。
-    ///
-    /// - 手段：只设置 `runtime_dir`，其余字段保持缺省，然后读取 `LaunchConfig` 的访问器。
-    /// - 判断：只有运行时目录被设置，另外三项仍为 `None`——默认值由 `kb_svc_salvo` 决定，
-    ///   本 crate 不参与，避免两处默认值漂移。
-    #[test]
-    fn to_launch_config_only_carries_given_options() {
-        let config = to_launch_config(Args {
-            runtime_dir: Some("/tmp/run".into()),
-            ..Args::default()
-        });
-
-        assert_eq!(config.tcp_addr(), None);
-        assert_eq!(config.config_path(), None);
-        assert_eq!(config.runtime_dir(), Some(std::path::Path::new("/tmp/run")));
-        assert_eq!(config.assets_dir(), None);
+/// 按解析结果分发。
+///
+/// 单独拆出来是为了让 `main` 只保留"日志 + 退出码"这件事；同时它也是唯一
+/// 同时用到 [`serve_`] 与 [`cli_`] 的地方。
+async fn dispatch_(parsed: Parsed) -> Result<(), CoreError> {
+    match parsed.command {
+        Command::Help => {
+            print!("{}", args_::USAGE);
+            Ok(())
+        }
+        Command::Serve => serve_::run(&parsed.paths).await,
+        Command::Workspace(command) => Ok(cli_::run_workspace(&parsed.paths, command).await?),
+        Command::Session(command) => Ok(cli_::run_session(&parsed.paths, command).await?),
     }
 }

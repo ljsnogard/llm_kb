@@ -1,249 +1,348 @@
 # kb_core
 
-知识库主进程的可执行入口。
+知识库**主进程**的可执行入口。
 
-依据 `dev-notes.md` §13.1 的分工：`kb_svc_salvo` 是**纯库**（提供 HTTP / WebSocket
-路由、会话逻辑与监听器组装），**进程的启动与编排由本 crate 负责**。现阶段两者视为
-一体，将来再拆分。
-
-> **当前状态：阶段 3.5**
-> 已有：仿 DSH 观感的聊天界面、浏览器 ↔ 插件两段 WebSocket 通道、
-> LLM 服务与 API key 的配置（文件 + 界面）。
-> 还没有：`kb_rig_llm` 插件进程（因此现在提问会提示「插件未连接」）。
+> **当前状态：IPC 已接入，工作区与会话的增删查改能整条走通**
+> 已有：命令行入口、compio 异步运行时、工作区与会话的**本地文件存储**、
+> **`kb_svc_servo_ipc` 服务端**（客户端连上来之后，请求经 IPC → 派发 →
+> 存储 → 应答原路返回），以及一组临时的增删查改子命令（不开客户端时手工检验用）。
+> 还没有：LLM 生成（`Ask` / 事件流）、设置、目录浏览那几个域——
+> 它们的 trait 尚未落地，服务端会明确回 `BadRequest`。
+>
+> 与上一版相比：**`kb_svc_salvo` 与 `tokio` 已从本 crate 移除**，
+> 随之删掉了 HTTP / WebSocket 监听、`--config`、`tcp_addr` 位置参数，
+> 以及前端资源覆盖目录 `--assets-dir`（前端资源本就属于 `kb_svc_salvo`）。
+> 进程间通信现在由 `kb_svc_servo_ipc` 承担。
 
 ---
 
-## 1. 它做了什么
+## 1. 先跑起来
 
-启动后**同时**监听两个服务，二者共用同一份路由表：
-
-| 监听 | 位置 | 给谁用 |
-| :--- | :--- | :--- |
-| TCP HTTP / WebSocket | `127.0.0.1:8788`（默认） | 浏览器：界面、设置接口、`/ws/chat` |
-| Unix domain socket | `$XDG_RUNTIME_DIR/llm_kb/kb-<日期>-<uuid>.sock` | `kb_rig_llm` 插件子进程：`/ws/plugin` |
-
-## 2. 依赖的外部变量与约定
-
-### 2.1 环境变量
-
-| 变量 | 是否必需 | 作用 |
-| :--- | :--- | :--- |
-| `XDG_CONFIG_HOME` / `HOME` | 否 | 决定默认配置文件位置 `$XDG_CONFIG_HOME/llm_kb/config.toml`（回退 `~/.config/...`）。 |
-| `XDG_RUNTIME_DIR` | 否 | 决定插件 socket 的父目录 `$XDG_RUNTIME_DIR/llm_kb`；未设置时回退系统临时目录。 |
-| `RUST_LOG` | 否 | 日志过滤，走 `env_logger`。默认 `info`；排查问题可设 `RUST_LOG=debug`（会打印 WebSocket 收发与资源覆盖情况）。 |
-| `LLM_KB_PLUGIN_SOCKET` | 否（**尚未使用**） | 预留：启动 `kb_rig_llm` 子进程时，父进程用它把 socket 路径传给子进程。 |
-
-### 2.2 配置文件
-
-默认位置 `$XDG_CONFIG_HOME/llm_kb/config.toml`（可用 `--config` 覆盖）。
-**不存在时会自动生成**一份带注释的模板，因此首次启动不需要手工创建：
-
-```toml
-[services.deepseek]
-provider = "deepseek"
-model = "deepseek-chat"
-base_url = "https://api.deepseek.com"
-api_key = ""
-```
-
-- `services.<id>` 的 `<id>` 由用户自取，会作为界面上「服务」下拉框里的名字；
-- 通过界面修改时**逐键写回**，用户写在文件里的注释会被保留；
-- ⚠️ **API key 是明文保存的**（当前阶段的安全取舍），不要把该文件提交到版本库。
-
-### 2.3 socket 文件名
-
-socket **文件名不接受命令行参数或环境变量指定**，每次启动按「日期 + UUID」生成：
-
-```text
-$XDG_RUNTIME_DIR/llm_kb/kb-20260913-f9c628f955594c1fa73965bcac42f091.sock
-                    └─ 日期 ─┘└──────── UUID v4 ────────┘
-```
-
-目录权限 `0700`、文件权限 `0600`；带 UUID 保证每次启动互不冲突，历史残留文件不会
-导致启动失败。进程被 `SIGKILL` 强杀时文件会残留（无法拦截），可手工清理。
-
-### 2.4 命令行参数
-
-```text
-kb_core [--config <file>] [--runtime-dir <dir>] [--assets-dir <dir>] [tcp_addr]
-```
-
-| 参数 | 默认值 | 说明 |
-| :--- | :--- | :--- |
-| `tcp_addr` | `127.0.0.1:8788` | 用户侧监听地址；端口写 `0` 表示由系统分配。 |
-| `--config <file>` | `$XDG_CONFIG_HOME/llm_kb/config.toml` | 用户配置文件；不存在时自动创建。 |
-| `--runtime-dir <dir>` | `$XDG_RUNTIME_DIR/llm_kb` | 只覆盖 socket 的**目录**。 |
-| `--assets-dir <dir>` | 无（用内嵌资源） | 前端资源覆盖目录，调试页面时用；只在启动时读取一次。 |
-
-参数顺序不敏感；未知参数会被忽略并打印警告。
-
-## 3. 从最简单的用例开始
-
-### 3.1 启动
+### 1.1 启动服务
 
 ```bash
 cargo run -p kb_core
 ```
 
-预期日志：
+预期日志（时间戳与实际目录随环境变化）：
 
 ```text
-[<时间戳> INFO  kb_core] 用户配置: /root/.config/llm_kb/config.toml
-[<时间戳> INFO  kb_core] 服务 deepseek: provider=deepseek model=deepseek-chat api_key=缺失
-[<时间戳> INFO  kb_svc_salvo::server] kb_svc_salvo 已绑定: tcp=127.0.0.1:8788 uds=/run/user/1000/llm_kb/kb-<日期>-<uuid>.sock
-[<时间戳> INFO  kb_core] 用户界面: http://127.0.0.1:8788
-[<时间戳> INFO  kb_core] 插件通道: /run/user/1000/llm_kb/kb-<日期>-<uuid>.sock
+[<时间戳> INFO  kb_core::serve_] kb_core v0.1.0（协议 v1）
+[<时间戳> INFO  kb_core::serve_] 运行时目录: /run/user/1000/llm_kb
+[<时间戳> INFO  kb_core::serve_] 存储目录: /run/user/1000/llm_kb/storage
+[<时间戳> INFO  kb_core::serve_] IPC 端点文件: /run/user/1000/llm_kb/kb-core.ipc
+[<时间戳> INFO  kb_core::serve_] 已登记工作区: 0 个
+[<时间戳> INFO  kb_core::serve_] 等待客户端连接（Ctrl-C 退出）
 ```
 
-首次运行会创建配置文件，因此第二行的服务名与 `api_key=缺失` 是预期的。
-
-### 3.2 用浏览器访问
-
-打开 <http://127.0.0.1:8788/>，会看到仿 DSH 观感的聊天界面：
-
-- 顶部：产品名、插件在线状态、服务下拉框、主题切换、⚙ 设置；
-- 中部：空态提示（还没有对话时）；
-- 底部：输入框 + 发送按钮（Enter 发送、Shift+Enter 换行）。
-
-首次打开时插件必是**离线**状态，这是正常的——`kb_rig_llm` 还没实现。
-点右上角 **⚙** 就能配置 LLM 服务与 API key。
-
-若想固定路径、避免污染用户目录：
-
-```bash
-cargo run -p kb_core -- --config /tmp/kb-demo/config.toml --runtime-dir /tmp/kb-demo/run
-```
-
-## 4. 一句命令能测出什么
-
-下列命令假定服务端已在 `127.0.0.1:8788` 运行。
-
-### 4.1 界面与静态资源
-
-```bash
-curl -sI http://127.0.0.1:8788/ | head -3
-curl -s -o /dev/null -w "app.css: %{http_code} %{content_type}\n" http://127.0.0.1:8788/app.css
-curl -s -o /dev/null -w "app.js:  %{http_code} %{content_type}\n" http://127.0.0.1:8788/app.js
-```
-
-预期：
+**进程会一直在那里**，直到你按 `Ctrl-C`。客户端（今天的
+`kb_svc_servo_ipc::Client`，将来的 `kb_admin_desktop`）靠 `IPC 端点文件`
+里那个名字找上来：
 
 ```text
-HTTP/1.1 200 OK
-content-type: text/html; charset=utf-8
+运行时目录/
+└── kb-core.ipc        内容是 ipc-channel 的端点名字（不是 socket 路径本身）
+```
+
+服务端每接受一个客户端就**重建端点并重写这个名字**，所以文件里始终是
+"当前有效的那个"；进程被强杀时它可能残留（下一个客户端会重试到超时），
+重新启动 `kb_core` 会把它清掉。
+
+不想污染用户目录时，把两个目录都指到 `/tmp`：
+
+```bash
+cargo run -p kb_core -- --runtime-dir /tmp/kb-demo/run --storage-dir /tmp/kb-demo/data
+```
+
+### 1.2 从零跑完一轮增删查改
+
+有两条等价的路：**走 IPC**（真实链路）或**用临时子命令**（不开客户端）。
+两者共用同一个存储层，因此看到的数据是一样的。
+
+#### 走 IPC
+
+```rust
+// 客户端侧（`kb_svc_servo_ipc` 里已经有一份端到端测试，见 tests/round_trip.rs）
+use abs_kb_svc::v1::desktop::TrWorkspaceService;
+use kb_svc_servo_ipc::Client;
+
+let client = Client::connect("/tmp/kb-demo/run")?;
+let workspaces = client.list_workspaces().await?;
+```
+
+#### 用临时子命令
+
+下面这段可以直接整段复制执行（`kb` 是一个把公共参数固定下来的 shell 函数）：
+
+```bash
+cargo build -p kb_core
+
+kb() { ./target/debug/kb-core \
+  --runtime-dir /tmp/kb-demo/run \
+  --storage-dir /tmp/kb-demo/data "$@"; }
+
+# ── 增：新建工作区与会话，标识由 kb_core 生成 ──────────────────────
+WID=$(kb workspace add --name 笔记 --path /tmp/notes | cut -f1)
+SID=$(kb session add --workspace "$WID" --title 第一问 | cut -f1)
+
+# ── 查：列表与详情 ────────────────────────────────────────────────
+kb workspace list
+kb session list --workspace "$WID"
+kb session show  --workspace "$WID" "$SID"
+
+# ── 改：重命名 ────────────────────────────────────────────────────
+kb workspace update "$WID" --name 资料库
+kb session update   --workspace "$WID" "$SID" --title 改名后
+
+# ── 删：先删会话，再删工作区（删工作区会级联删掉它名下的会话）────────
+kb session remove   --workspace "$WID" "$SID"
+kb workspace remove "$WID"
+```
+
+预期输出（标识是每次运行新生成的 UUID，形状固定、取值不同）：
+
+```text
+$ kb workspace list
+w-3f2b9c1d4e5a4b7c8d9e0f1a2b3c4d5e	笔记	/tmp/notes
+# 共 1 个工作区
+
+$ kb session list --workspace "$WID"
+s-9a1c77e0b2d34f5a8c6e0b1d2f3a4c5b	第一问	0 条	更新于 1789659249094
+# 共 1 个会话
+
+$ kb session show --workspace "$WID" "$SID"
+{
+  "summary": {
+    "session_id": "s-9a1c77e0b2d34f5a8c6e0b1d2f3a4c5b",
+    "workspace_id": "w-3f2b9c1d4e5a4b7c8d9e0f1a2b3c4d5e",
+    "title": "第一问",
+    "updated_at_millis": 1789659249094,
+    "turn_count": 0
+  },
+  "turns": []
+}
+
+$ kb workspace update "$WID" --name 资料库
+w-3f2b9c1d4e5a4b7c8d9e0f1a2b3c4d5e	资料库	/tmp/notes
+
+$ kb session update --workspace "$WID" "$SID" --title 改名后
+s-9a1c77e0b2d34f5a8c6e0b1d2f3a4c5b	改名后	0 条	更新于 1789659249108
+
+$ kb workspace remove "$WID"
+已删除工作区 w-3f2b9c1d4e5a4b7c8d9e0f1a2b3c4d5e（连同它名下的会话）
+```
+
+`workspace list` / `session list` 的每行是「制表符分隔的若干字段 + 最后一行
+`# 共 N 个`」，所以 `cut -f1` 就能取到标识，像上面那样串起来用。
+
+### 1.3 自动化验证
+
+```bash
+cargo test -p kb_core
+```
+
+预期 25 项全部 `ok`，其中覆盖了存储语义、命令行解析，以及**整条 IPC 链路**：
+
+```text
+test ipc_::tests_::ipc_round_trip_reaches_the_local_store_ ... ok     # 客户端→IPC→Store→磁盘
+test ipc_::tests_::store_errors_map_to_protocol_codes_ ... ok         # 存储错误 → ErrorCode
+test store_::tests_::add_workspace_writes_documented_layout_ ... ok   # 文件落在约定路径
+test store_::tests_::remove_workspace_cascades_sessions_ ... ok       # 删工作区级联删会话
+test store_::tests_::create_session_derives_title_and_persists_turns_ ... ok
+test store_::tests_::list_sessions_is_newest_first_ ... ok            # 最近活动的会话在前
+test store_::tests_::invalid_id_is_rejected_before_touching_disk_ ... ok
+test store_::tests_::broken_file_reports_decode_error_with_path_ ... ok
+test args_::tests_::parse_workspace_commands_ ... ok                  # 子命令解析
+test args_::tests_::parse_rejects_bad_input_ ... ok                   # 坏参数被明确拒绝
 ...
-app.css: 200 text/css; charset=utf-8
-app.js:  200 text/javascript; charset=utf-8
 ```
 
-### 4.2 配置文件被自动创建
+`ipc_round_trip_reaches_the_local_store_` 是那个"真起服务端、真走 ipc-channel、
+真落盘"的用例：它在独立线程上用 `Listener` 起服务端、用 `Client` 连上去跑完一轮
+增删查改，并回到服务端的存储目录里核对 JSON 文件确实写出来了。
 
-```bash
-ls -la "${XDG_CONFIG_HOME:-$HOME/.config}/llm_kb/"
-```
+---
 
-预期：存在 `config.toml`，内容是一份带注释的模板（含 `[services.deepseek]`）。
-用 `--config /tmp/kb-demo/config.toml` 启动时，模板会写到 `/tmp/kb-demo/config.toml`。
-
-### 4.3 设置接口：写入服务并遮蔽 API key
-
-```bash
-# 写入一个服务
-curl -s -X POST http://127.0.0.1:8788/api/settings/services \
-  -H 'content-type: application/json' \
-  -d '{"id":"deepseek","provider":"deepseek","model":"deepseek-chat","base_url":"https://api.deepseek.com","api_key":"sk-demo-123"}'
-
-# 再读回来
-curl -s http://127.0.0.1:8788/api/settings
-```
-
-预期：第一条返回 `{"id":"deepseek","ok":true}`；第二条里该服务的
-`api_key` 是 `••••••••`、`has_api_key` 为 `true`，且 `active_service` 已被自动设为
-`deepseek`。**响应里不会出现明文 key**，也不会出现 `sk-demo-123`。
-
-同时配置文件被写回，且**原有注释仍在**：
-
-```bash
-grep -c '^#' "${XDG_CONFIG_HOME:-$HOME/.config}/llm_kb/config.toml"   # 预期 > 0
-```
-
-### 4.4 没有插件时提问会被明确拒绝
-
-浏览器里直接输入问题并发送，界面底部会提示「LLM 插件当前未连接」，
-消息区出现一条红色错误块。等价的命令行验证由集成测试覆盖（见 §4.6）。
-
-### 4.5 优雅退出会清理 socket 文件
-
-```bash
-rm -rf /tmp/kb-run
-timeout -s TERM 3 cargo run -p kb_core -- \
-  --config /tmp/kb-run/config.toml --runtime-dir /tmp/kb-run 127.0.0.1:8788
-ls -A /tmp/kb-run/    # 预期：只剩 config.toml，没有 .sock
-```
-
-预期日志：
+## 2. 命令行参考
 
 ```text
-[<时间戳> INFO  kb_svc_salvo::launch] 收到 SIGTERM，开始优雅退出
-[<时间戳> WARN  kb_svc_salvo::launch] 服务端未在 3s 内退出，已放弃等待
-[<时间戳> INFO  kb_svc_salvo::launch] 已清理 socket 文件: /tmp/kb-run/kb-<日期>-<uuid>.sock
+kb-core [--runtime-dir <目录>] [--storage-dir <目录>] [<子命令>]
 ```
 
-交互式终端里按 `Ctrl-C`（`SIGINT`）走同一条路径。
+### 2.1 全局选项
 
-> 这里必须显式给 `--config`：不给的话会用默认路径 `~/.config/llm_kb/config.toml`，
-> 而首次启动需要在那个目录下建文件。`kb_core` 不会为「配置文件建不出来」做特殊降级，
-> 它会把 I/O 错误原样报出来（例如只读 HOME 下会看到 `io error: Read-only file system`）。
-
-### 4.6 自动化验证（推荐）
-
-```bash
-cargo test --workspace
-```
-
-预期共 43 项全部 `ok`，其中与界面/配置直接相关的是：
-
-```text
-test browser_question_reaches_plugin_and_answers_stream_back ... ok   # 提问→插件→增量回浏览器
-test chat_channel_greets_with_ready ... ok                           # 打开页面即收到 ready
-test ask_without_plugin_returns_error_frame ... ok                   # 无插件时明确报错
-test settings_api_round_trip_masks_key ... ok                        # 写入服务 + 遮蔽明文 key
-test index_serves_embedded_html ... ok                               # 首页 HTML
-test file_store_upsert_keeps_comments ... ok                         # 写配置时保留注释
-```
-
-## 5. 预期结果一览
-
-| 命令 / 操作 | 验证的内容 | 预期结果 |
+| 选项 | 默认值 | 说明 |
 | :--- | :--- | :--- |
-| `cargo run -p kb_core` | 启动、建配置、绑两个监听器 | 5 行 `INFO`，含界面地址与 socket 路径 |
-| 浏览器打开 `http://127.0.0.1:8788/` | 界面可用 | 聊天界面，插件状态「插件离线」 |
-| `curl -sI .../` | 首页与 content-type | `200` + `text/html; charset=utf-8` |
-| `curl .../app.css`、`.../app.js` | 静态资源 | `200` + `text/css` / `text/javascript` |
-| `POST /api/settings/services` | 写入服务与 key | `{"ok":true}`，配置文件被写回且注释保留 |
-| `GET /api/settings` | 读取设置 | key 显示为 `••••••••`，含 `has_api_key` |
-| ⚙ 面板里改 key / 切换服务 | 界面配置能力 | 列表与下拉框即时更新，配置落盘 |
-| 无插件时发送问题 | 降级路径 | 提示「LLM 插件当前未连接」 |
-| `cargo test --workspace` | 全部契约 | 43 项 `ok` |
-| `timeout -s TERM 3 cargo run ...` | 关停清理 | `已清理 socket 文件`，目录里只剩 `config.toml` |
+| `--runtime-dir <目录>` | `$XDG_RUNTIME_DIR/llm_kb`（回退系统临时目录下的 `llm_kb`） | 运行时目录。IPC 端点名字文件 `kb-core.ipc` 放在这里。 |
+| `--storage-dir <目录>` | `<运行时目录>/storage` | 工作区与会话的存储目录。显式给出时与运行时目录完全独立。 |
+| `-h` / `--help` | — | 打印用法说明。 |
 
-## 6. 下一阶段（尚未实现）
+### 2.2 子命令
 
-按 `dev-notes.md` §11 的顺序：
+| 子命令 | 作用 |
+| :--- | :--- |
+| `workspace add --name <名字> --path <目录>` | 新建工作区，标识由 `kb_core` 生成。 |
+| `workspace list` | 列出全部工作区（按标识升序）。 |
+| `workspace show <工作区标识>` | 查看单个工作区。 |
+| `workspace update <工作区标识> [--name <名字>] [--path <目录>]` | 改名字 / 改路径，两者至少给一个。 |
+| `workspace remove <工作区标识>` | 删除工作区，并级联删除它名下的会话。 |
+| `session add --workspace <工作区标识> [--title <标题>]` | 新建会话；不给标题时从首条用户消息推导。 |
+| `session list --workspace <工作区标识>` | 列出该工作区下的会话（按最近活动时间降序）。 |
+| `session show --workspace <工作区标识> <会话标识>` | 打印会话完整内容（协议类型的 JSON）。 |
+| `session update --workspace <工作区标识> <会话标识> --title <标题>` | 改会话标题。 |
+| `session remove --workspace <工作区标识> <会话标识>` | 删除会话。 |
 
-1. **启动并监管 `kb_rig_llm` 子进程**：把 socket 路径通过 `--socket <path>` 与
-   `LLM_KB_PLUGIN_SOCKET` 传给子进程，处理退出监测与退避重启；
-2. **`kb_rig_llm` + rig 适配 crate**：把 rig 的流式输出转成 `abs_llm::v1` 并上报；
-3. **`ServerHandle::stop_graceful`**：把当前「等 3 秒或 abort」换成真正的优雅关停；
-4. **浏览器端到端测试**：补一条 Playwright 用例覆盖界面的流式渲染与设置面板。
+不带子命令即进入常驻骨架（§1.1）。选项与位置参数**顺序不敏感**；
+不支持 `--key=value` 与短选项合并。
 
-分工上：`kb_core` 只负责「解析参数 + 初始化日志 + 调用 `launch`」，
-启动编排（配置加载、监听绑定、优雅退出、socket 清理）都在
-`kb_svc_salvo::launch` 里。
+### 2.3 退出码
 
-## 7. 相关文档
+| 退出码 | 含义 |
+| :---: | :--- |
+| `0` | 成功（常驻骨架被信号终止时由信号决定，见下）。 |
+| `1` | 运行期失败：标识不合法、目标不存在、文件读写失败等，错误同时写进日志。 |
+| `2` | 参数错误：未知选项/子命令、缺参数、多余的参数；用法说明会一起打到 stderr。 |
 
-- `dev-notes.md`：进度、尚未决策的事项、剩余工作；
-- `kb_svc/crates/kb_svc_salvo/src/launch.rs`：启动编排、信号处理与资源清理的实现与说明；
-- `kb_svc/crates/kb_svc_salvo/src/web/assets/`：前端三件套（HTML / CSS / JS）；
-- `kb_svc/crates/kb_svc_salvo/src/plugin_socket.rs`：socket 路径生成与清理的实现与测试。
+常驻骨架没有安装信号处理器，`Ctrl-C`（`SIGINT`）走操作系统的默认处置，直接结束。
+
+---
+
+## 3. 数据存在哪里
+
+工作区与会话暂时用**本地文件**代替 Turso。文件内容就是
+`abs_kb_svc::v1::desktop` 里协议类型的 JSON 表示——**存储格式与线上格式同源**，
+不会出现"能存进去、却发不出去"的字段。
+
+```text
+<storage_dir>/
+├── workspaces/
+│   └── <workspace_id>.json        一个工作区（`Workspace`）
+└── sessions/
+    └── <workspace_id>/
+        └── <session_id>.json      一个会话（`SessionDetail`：摘要 + 全部消息）
+```
+
+三条硬性约定（都有单元测试守着）：
+
+1. **标识必须能安全地当文件名**：只允许 ASCII 字母、数字、`-`、`_`，且不超过
+   128 字节。协议把标识当作不透明字符串，手工构造（如 `"w-1"`）是允许的，
+   所以存储层不能假定它一定由 `generate()` 产生；含 `../` 的标识会在碰盘之前
+   就被拒绝。
+2. **写入先落临时文件再 `rename`**：读到的内容要么是旧的、要么是新的，
+   不会是半个 JSON。进程被强杀时最坏留下一个 `*.json.tmp`，它不会被当作对象。
+3. **会话属于工作区**：`create_session` / `list_sessions` 会先确认工作区存在；
+   删除工作区会级联删除它的会话目录。工作区不存在时 `list_sessions`
+   **返回错误而不是空列表**——否则客户端把标识写错时，会误以为"这里没有会话"。
+
+---
+
+## 4. 设计说明
+
+### 4.1 为什么去掉 `kb_svc_salvo` 与 `tokio`
+
+上一版里 `kb_core` 只是 `kb_svc_salvo::launch::launch` 的薄壳：HTTP / WebSocket
+监听、会话逻辑、启动编排全在 `kb_svc_salvo` 里，本 crate 只解析参数。
+团队已决定把进程间通信从 socket / HTTP 换成共享内存方向的 IPC，`kb_svc_salvo`
+整体废弃，因此本 crate 对它的依赖、以及它带来的 `tokio` 依赖一并删除。
+
+同时删掉的还有三个只为那套 HTTP 通道存在的入口：
+
+- `tcp_addr` 位置参数与 `--config`：前者是用户侧 HTTP 监听地址，后者是
+  `kb_svc_salvo` 的 LLM 服务配置文件；
+- `--assets-dir`：前端资源**覆盖目录**（调试页面时用）。前端资源本身属于
+  `kb_svc_salvo`，`kb_core` 不再持有任何页面。
+
+### 4.2 为什么是 compio
+
+进程间通信将走 `kb_svc_servo_ipc`（servo/ipc-channel）。ipc-channel 不是
+异步 API，且本机实测表明：在异步任务里内联调用它的阻塞 `recv()`，
+会让 `current_thread` 运行时在 300 ms 内一次定时任务都跑不到。
+因此业务侧需要一个**能把阻塞收敛到别处**的运行时，而 compio 的完成式模型
+正好承接这一点。
+
+具体到本 crate：`main` 用 `#[compio::main]`；本地文件的读写走 `compio::fs`
+（io_uring）；目录遍历与递归删除这两个 compio 0.19 还没提供异步版本的操作，
+交给 `compio::runtime::spawn_blocking`，**不占用执行器线程**。
+
+### 4.3 存储层为什么单独一块
+
+存储的全部语义都在 `src/store_/` 里，对外只有 `Store` 一个类型。这样做是为了让
+"换成数据库"这件事有明确的边界：下一轮 IPC 的请求处理只依赖 `Store` 的方法，
+替换实现时不需要动请求/应答的代码。
+
+存储层的公开方法是普通 `async fn`，没有用 `gen_mcf2::gen_may_cancel_future`
+包成可取消 future：本 crate 的依赖链上**不存在** `gen_mcf2`
+（根 `Cargo.toml` 里的 `abs_cancel` 尚无任何成员使用），因此适用
+`AGENTS.md` 第 4 条的例外。将来 IPC 层引入取消语义时这一层可以原样保留——
+文件操作本身足够短，取消的价值在传输层。
+
+### 4.4 与 `abs_kb_svc` 协议的关系
+
+存储层直接使用 `abs_kb_svc::v1::desktop` 的 `Workspace` / `SessionSummary` /
+`SessionDetail` / `Turn` 等类型，不在此处镜像第二套结构。因此：
+
+- 文件里的 JSON 与将来 IPC 上跑的是同一批类型；
+- 协议里"标识由 `kb_core` 分配"、"只发差异不整棵树"（列表只回摘要、正文按需
+  拉取）这两条约定，在存储层的接口形状上已经体现出来。
+
+临时的 CRUD 子命令（`src/cli_.rs`）只是把这些方法挂到命令行上，
+**不构成对外约定**；IPC 接通后可以保留为维护命令，也可以整体删除。
+
+### 4.5 模块地图
+
+| 文件 | 职责 |
+| :--- | :--- |
+| `src/main.rs` | 入口：初始化日志 → 解析参数 → 分发 → 决定退出码 |
+| `src/args_.rs` | 命令行与子命令解析；`USAGE` 是唯一的用法说明来源 |
+| `src/error_.rs` | 进程级错误：把存储失败与 IPC 失败收在一处 |
+| `src/serve_.rs` | 常驻服务：打开存储、`Listener::bind`、循环 accept + serve |
+| `src/ipc_.rs` | `KbService`：按域 RPC trait 的服务端实现（转发给 `Store`） |
+| `src/cli_.rs` | 临时的 CRUD 子命令实现 |
+| `src/store_/` | 本地文件存储：`Store`、错误类型、布局与标识校验 |
+
+### 4.6 一次请求的完整路径
+
+```text
+kb_admin_desktop / 测试客户端
+    │  Client::add_workspace(request)                  ← kb_svc_servo_ipc 的代理
+    │  ── 请求通道 ──►  Connection::serve              ← kb_core 的常驻循环
+    │                       │  dispatch_()
+    │                       ▼
+    │                   KbService::add_workspace()     ← src/ipc_.rs
+    │                       │
+    │                       ▼
+    │                   Store::add_workspace()         ← src/store_/mod.rs
+    │                       │  写 workspaces/<id>.json
+    │  ◄── 应答通道 ────────┘  Reply::WorkspaceAdded { local_id, workspace }
+    └─ 代理把载荷取出来返回 Workspace
+```
+
+业务错误（例如"工作区不存在"）在 `KbService` 里就翻成
+`RpcError::Business(ErrorReply)`，到线上是 `Reply::Error`；传输失败（对端断开）
+则走客户端的 `RpcError::Transport`。两类错误的划分见
+`kb_svc/crates/abs_kb_svc/README.md` §5 第 7 条。
+
+---
+
+## 5. 下一轮（尚未实现）
+
+1. **其余业务域**：`Hello`（握手）、设置（`ListServices` / `UpsertService`…）、
+   目录浏览（`ListDirectory`）、生成（`Ask` / `Cancel` + 事件流）。
+   它们的按域 trait 还没落地，服务端现在对它们明确回 `BadRequest`；
+2. **并发服务多个客户端**：当前一次只服务一个连接（上一个断开才回到 `accept`）。
+   要并发就得把 `accept` 循环与 `serve` 拆到不同任务上，并处理端点的生命周期；
+3. **优雅退出**：当前依赖操作系统的默认信号处置；将来要显式撤下端点名字、
+   通知在连的客户端；
+4. **`kb_admin_desktop` 接上**：客户端侧目前只有 `kb_svc_servo_ipc::Client`
+   这个 Rust 代理，Flutter 那边还没有桥接。
+
+---
+
+## 6. 相关文档
+
+- `dev-notes/kb_svc_servo_ipc-20260917-1548.md`：IPC 落地方案、
+  三个未知数的实测结论、以及本 crate 与 IPC 的分工；
+- `dev-notes/abs_kb_svc-20260917-1254.md`：IPC 选型（ipc-channel）与异步 RPC 设计；
+- `dev-notes/kb_admin_desktop-20260917-1341.md`：客户端通信需求与协议数据来源；
+- `kb_svc/crates/abs_kb_svc/README.md`：业务通信抽象层的定位、契约与接口形状；
+- `kb_svc/crates/abs_kb_svc/src/v1/desktop/mod.rs`：协议 v1 数据定义的入口。
