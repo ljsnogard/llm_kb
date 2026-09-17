@@ -45,7 +45,7 @@ use gen_mcf2::gen_may_cancel_future;
 use ipc_channel::ipc::{self, IpcReceiver, IpcSender};
 
 use super::error_::ServoIpcError;
-use super::rendezvous_::{DEFAULT_CONNECT_TIMEOUT, connect_with_retry_, name_file_in};
+use super::rendezvous_::{DEFAULT_CONNECT_TIMEOUT, connect_with_retry_};
 
 /// `kb_core` 的客户端代理。
 ///
@@ -106,8 +106,7 @@ impl Client {
         runtime_dir: impl AsRef<Path>,
         timeout: Duration,
     ) -> Result<Self, ServoIpcError> {
-        let name_file = name_file_in(runtime_dir.as_ref());
-        let boot = connect_with_retry_(&name_file, timeout)?;
+        let boot = connect_with_retry_(runtime_dir.as_ref(), timeout)?;
 
         let (request_tx, request_rx) =
             ipc::channel::<RequestEnvelope>().map_err(ServoIpcError::CreateChannel)?;

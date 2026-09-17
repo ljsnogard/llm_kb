@@ -10,7 +10,9 @@
     `kb_svc/crates/abs_kb_svc/src/v1/desktop/rpc_.rs`；
     §3.4 的其余域（设置 / 目录 / 握手 / 生成 / 事件）仍待补；
   - **§3 的落地顺序已走完第 3、4、5 步**：`kb_svc_servo_ipc` 已建，
-    `kb_core` 已接上并在真实存储上跑通一轮增删查改。
+    `kb_core` 已接上并在真实存储上跑通一轮增删查改；
+  - **§5.4 / §5.5 记录了后续两次纠正**：取消要一路贯到 `store_`（不再有裸
+    `async fn`），端点文件名改回「日期 + UUID」且由 `kb_core` 决定。
 - 落地记录见 §5。
 - 前置文档：
   - [`abs_kb_svc-20260917-1254.md`](abs_kb_svc-20260917-1254.md)：ipc-channel 选型、
@@ -114,30 +116,36 @@ where
 
 ## 1. 已经确定、不必再讨论的部分
 
-### 1.1 引导机制：重发 one-shot 名字 + 客户端重试
+### 1.1 引导机制：重发端点名 + 客户端重试
 
 ```text
 kb_core 侧（accept 是阻塞调用 → 放进 compio 的阻塞线程池）:
+  启动时: 生成 <runtime-dir>/kb-<YYYYMMDD>-<uuid>.ipc，并清掉上次残留的 kb-*.ipc
   循环 {
-      ① IpcOneShotServer::new()  →  得到一个新名字（/tmp/.tmpXXXXXX/socket）
-      ② 原子写进 <runtime-dir>/kb-core.ipc（先写 .tmp 再 rename）
+      ① IpcOneShotServer::new()  →  得到一个新端点名（/tmp/.tmpXXXXXX/socket）
+      ② 原子写进上面那个名字文件（先写 .tmp 再 rename）
       ③ accept()  ← 阻塞
       ④ 拿到客户端的 (请求接收端, 应答发送端, 事件发送端) → 交给处理逻辑
+      ⑤ 把名字文件内容清空（这个端点已经用掉了）
   }
 
 客户端侧:
   循环 {
-      读 <runtime-dir>/kb-core.ipc
-      connect 成功就发引导消息；失败（名字是上一轮的 / 还没公布）
+      在 <runtime-dir> 里找内容非空的 kb-*.ipc
+      connect 成功就发引导消息；失败（端点被抢了 / 正在换下一个）
       就睡 20 ms 再来，直到超时
   }
 ```
 
-- 名字文件是我们自己的约定，放在 `--runtime-dir` 下；ipc-channel 自己生成的 socket
-  在 `/tmp/.tmpXXXXXX/`（父目录 0700），我们只负责转达。
+- **文件名由 `kb_core` 决定**，沿用旧 `plugin_socket` 的「日期 + UUID」约定：
+  每次启动独一无二，历史残留不会挡路。文件名的语义是"服务端实例"，
+  **内容**才是"当前可连的端点名"。
+- ipc-channel 自己生成的 socket 仍在 `/tmp/.tmpXXXXXX/`（父目录 0700），
+  我们只负责把端点名转达出去——`IpcOneShotServer` 没有提供指定 socket 路径的接口
+  （见 §5.5）。
 - 发布必须原子（`.tmp` + `rename`），与 `kb_core` 存储层同一个手法。
 - **`connect` 失败不是错误**，只是"再等等"；重试要有上限。
-- 并发抢同一个名字时只有一个能连上，其余快速失败并重试（实测无挂起）。
+- 并发抢同一个端点时只有一个能连上，其余快速失败并重试（实测无挂起）。
 
 ### 1.2 compio 侧：连接内不得内联阻塞
 
@@ -374,7 +382,7 @@ mock 的样板价值：实现方（`kb_svc_servo_ipc` 的客户端代理、`kb_c
 
 | 文件 | 内容 |
 | :--- | :--- |
-| `src/rendezvous_.rs` | 名字文件 `<runtime-dir>/kb-core.ipc` 的原子发布/撤销/读取，以及客户端的重试连接 |
+| `src/rendezvous_.rs` | 名字文件 `<runtime-dir>/kb-<日期>-<uuid>.ipc` 的生成、清理、原子发布/清空/读取，以及客户端的重试连接 |
 | `src/listener_.rs` | `Listener`：`bind` 时清掉残留名字；`accept` 阻塞地等服务端下一个客户端，接受后立刻撤下名字 |
 | `src/connection_.rs` | `Connection`：三通道端点 + `serve(&service)` + 请求派发（`Request` → trait → `Reply`） |
 | `src/client_.rs` | `Client`：实现 `TrWorkspaceService` / `TrSessionService` 的代理，含专用应答路由线程 |
@@ -402,7 +410,7 @@ mock 的样板价值：实现方（`kb_svc_servo_ipc` 的客户端代理、`kb_c
 `KbService` 的 `TrKbEndpoint::Error` 是 `Infallible`——服务端这一侧不产生传输层
 错误，所有失败都是业务错误；派发层里 `RpcError::Transport` 那条分支对本实现不可达。
 
-**验证**（`CARGO_HOME` 需指向仓库内的可写缓存，见 `dev-notes.md` §6）：
+**验证**（`CARGO_HOME` 需指向仓库内的可写缓存，见 [`llm_kb-20260917-1655.md`](llm_kb-20260917-1655.md) §4）：
 
 ```bash
 CARGO_HOME="$PWD/external/cargo-home" cargo test --workspace   # 140 项全绿
@@ -418,20 +426,52 @@ CARGO_HOME="$PWD/external/cargo-home" cargo clippy --workspace --all-targets
   真实目录上的 `Store`），客户端跑完一轮增删查改，并回到存储目录核对 JSON 文件
   确实写出来了、删工作区确实级联删掉了会话目录。
 
-### 5.4 一个需要团队知情的连带影响
+### 5.4 取消的处理方式（曾被误判，已纠正）
 
-`kb_core` 为了展开 `gen_mcf2`，依赖链上出现了 `gen_mcf2`，于是 `AGENTS.md`
-第 4 条的字面要求会落到这个 crate 上。处理办法与理由（已写在
-`kb_core/src/ipc_.rs` 的模块文档里）：
+`kb_core` 引入 `gen_mcf2` 之后，`AGENTS.md` 第 4 条自然落到这个 crate 上。
+**最初的处理是错的**：当时以"`kb_core` 是 bin、没有对外库接口"为由，只给
+`KbService` 的方法加了取消，把 `store_::Store` 的普通 `async fn` 留下了。
 
-- `kb_core` 是**可执行程序**，没有对外库接口。`store_::Store` 上那些普通
-  `async fn` 的调用者只有本 crate 自己，不存在"外部调用者通过取消令牌发信号"的
-  场景，因此**没有**把它们改造成可取消 future；
-- 真正对外的异步面是 `KbService` 那七个由宏展开的方法，它们每一个都检查了
-  传进来的取消令牌。
+团队纠正了这条判断，理由值得完整记下来：
 
-如果团队认为连 bin 内部的 `Store` 也必须可取消，那是一次独立的、范围不小的重构
-（七个方法 + 全部调用点），建议单独排一轮。
+> 即使是内部的 async 方法，只要它有被取消的可能性，就应该使用 `gen_mcf2`。
+> 没有被取消可能性的，一般只有直接返回一个结果的；即使是调用非本项目范围内的
+> 异步函数，一样有实现取消的方法，我们不能从设计上就抹杀了这种需求。
+
+现在的做法（`kb_core/src/store_/mod.rs`）：
+
+- `Store` 的**每个操作**都由 `gen_may_cancel_future` 展开出一对类型：
+  `XxxAsync`（`IntoFuture`）与 `XxxFuture`（`.may_cancel_with(token)`）。
+  `Store` 上不再有裸 `async fn`；
+- 取消的落点是 `race_cancel_`：**整个操作体**与取消信号赛跑，令牌先触发就返回
+  `StoreError::Cancelled`，尚未完成的等待随 future 被丢弃；
+- 私有辅助（`read_json_` / `write_json_` / `create_dir_all_` …）**不再各自包一层
+  宏**：它们只在已经被令牌包住的操作体里被调用，等待会随外层 future 一起被丢弃，
+  没有第二个调用者需要独立的 future 类型。它们没有假定"调用者不会取消"，
+  只是把这件事交给唯一的外层统一处理；
+- `KbService` 把 IPC 请求带的令牌**继续传给** `Store`（`.may_cancel_with(cancel)`），
+  而不是丢掉它自己造一个新的。
+- 守住这条的测试是 `store_::tests_::store_operations_honor_cancellation_`：
+  用 `CancelledToken` 调 `add_workspace` 会拿到 `StoreError::Cancelled`，
+  **并且磁盘上不会留下那个工作区**。
+
+### 5.5 端点文件名：由 `kb_core` 决定，保留「日期 + UUID」
+
+同一轮里纠正的第二件事：端点名字文件原来是固定的 `kb-core.ipc`，
+这既丢掉了旧 `plugin_socket` 的命名约定，也把"叫什么名字"默认让给了传输库。
+
+现在：`Listener::bind` 生成 `<runtime-dir>/kb-<YYYYMMDD>-<uuid-v4>.ipc`
+（见 `rendezvous_::new_name_file_in`，日期算法直接沿用 `plugin_socket`），
+客户端在运行时目录里找内容非空的 `kb-*.ipc`。
+**文件名由 `kb_core` 决定**，与传输实现无关——换掉 ipc-channel 也保留这条约定，
+因为"本机 IPC"这件事本身是 `kb_core` 的需求，而不是某个库的。
+
+一条需要写清楚的边界：`ipc-channel` 的 `IpcOneShotServer` 把自己绑在
+`tempdir()/socket` 上，**没有**提供指定路径的接口（`OsIpcOneShotServer::new()`
+里写死，`OsIpcReceiver::from_fd` 是私有的，`IpcReceiver` 也没有公开构造函数）。
+所以"操作系统层面的 socket 路径"目前仍由它决定；由 `kb_core` 决定并对外公布的
+是那个名字文件。若将来要让 socket 本身也落在我们指定的路径上，就得自己建监听
+socket（`libc` + `SOCK_SEQPACKET`）而不再用 `IpcOneShotServer`——那是一次独立决策。
 
 ## 6. 仍然没有答案的问题
 

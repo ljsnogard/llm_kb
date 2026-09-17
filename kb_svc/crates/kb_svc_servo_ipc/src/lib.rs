@@ -41,14 +41,24 @@
 //!
 //! ```text
 //! kb_core 侧（accept 是阻塞调用，必须从阻塞线程调用）:
-//!   循环 { 新建 one-shot server → 原子写名字文件 → accept → 交给处理逻辑 }
+//!   启动时: 生成 <runtime-dir>/kb-<日期>-<uuid>.ipc，并清掉上次残留的名字文件
+//!   循环  { 新建 one-shot 端点 → 把端点名原子写进名字文件 → accept → 处理 }
+//!          接受之后立刻把名字文件内容清空（那个端点已经用掉了）
 //! 客户端侧:
-//!   循环 { 读名字文件 → connect；失败（名字是上一轮的 / 还没公布）就重试 }
+//!   循环  { 在运行时目录里找内容非空的 kb-*.ipc → connect；失败就重试 }
 //! ```
 //!
-//! 名字文件是 `<runtime-dir>/kb-core.ipc`（见 [`name_file_in`]），内容就是
-//! ipc-channel 给的端点名字；发布用「写 `.tmp` + `rename`」保证原子。
-//! 实测：3 个客户端并发抢同一个名字时，只有一个能连上，其余快速失败后重试成功。
+//! **文件名由 `kb_core` 决定**，沿用 `kb_svc_salvo` 时期的「日期 + UUID」约定
+//! （见 [`new_name_file_in`]）：每次启动都独一无二，历史残留不会挡路。
+//! 这条约定与传输库无关，换掉 ipc-channel 也照样成立。
+//! 文件名的语义是"服务端实例"，内容才是"当前可连的端点名"。
+//!
+//! 实测：3 个客户端并发抢同一个端点时，只有一个能连上，其余快速失败后重试成功。
+//!
+//! > `ipc-channel` 自己的 socket 放在系统临时目录里（`IpcOneShotServer` 没有
+//! > 提供指定路径的接口），所以"操作系统层面的 socket 路径"仍由它决定；
+//! > 由 `kb_core` 决定并对外公布的是上边那个名字文件。细节见
+//! > [`rendezvous_`](self) 的模块文档。
 //!
 //! # 契约（`abs_kb_svc` README §5）
 //!
@@ -96,4 +106,7 @@ pub use client_::Client;
 pub use connection_::Connection;
 pub use error_::ServoIpcError;
 pub use listener_::Listener;
-pub use rendezvous_::{DEFAULT_CONNECT_TIMEOUT, NAME_FILE, name_file_in};
+pub use rendezvous_::{
+    DEFAULT_CONNECT_TIMEOUT, NAME_FILE_EXTENSION, NAME_FILE_PREFIX, find_name_file_in,
+    new_name_file_in,
+};

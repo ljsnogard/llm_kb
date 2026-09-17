@@ -24,7 +24,7 @@
 
 use std::convert::Infallible;
 
-use abs_cancel::TrCancellationToken;
+use abs_cancel::{TrCancellationToken, TrMayCancel};
 use abs_kb_svc::v1::desktop::{
     AddWorkspaceRequest, CreateSessionRequest, ErrorCode, ErrorReply, RpcError, SessionDetail,
     SessionId, SessionList, SessionSummary, TrKbEndpoint, TrSessionService, TrWorkspaceService,
@@ -91,7 +91,12 @@ where
     if cancel.is_cancelled() {
         return Err(cancelled_());
     }
-    service.store_.list_workspaces().await.map_err(store_error_)
+    service
+        .store_
+        .list_workspaces()
+        .may_cancel_with(cancel)
+        .await
+        .map_err(store_error_)
 }
 
 /// [`TrWorkspaceService::add_workspace`] 的服务端实现。
@@ -110,6 +115,7 @@ where
     service
         .store_
         .add_workspace(&request.name, &request.path)
+        .may_cancel_with(cancel)
         .await
         .map_err(store_error_)
 }
@@ -130,6 +136,7 @@ where
     service
         .store_
         .remove_workspace(&workspace_id)
+        .may_cancel_with(cancel)
         .await
         .map_err(store_error_)
 }
@@ -150,6 +157,7 @@ where
     service
         .store_
         .list_sessions(&workspace_id)
+        .may_cancel_with(cancel)
         .await
         .map_err(store_error_)
 }
@@ -170,6 +178,7 @@ where
     service
         .store_
         .create_session(&request.workspace_id, request.title, request.turns)
+        .may_cancel_with(cancel)
         .await
         .map_err(store_error_)
 }
@@ -191,6 +200,7 @@ where
     service
         .store_
         .get_session(&workspace_id, &session_id)
+        .may_cancel_with(cancel)
         .await
         .map_err(store_error_)
 }
@@ -212,6 +222,7 @@ where
     service
         .store_
         .remove_session(&workspace_id, &session_id)
+        .may_cancel_with(cancel)
         .await
         .map_err(store_error_)
 }
@@ -325,8 +336,10 @@ mod tests_ {
         let server_runtime = runtime.clone();
         let server = std::thread::spawn(move || {
             let store_runtime = compio::runtime::Runtime::new().expect("应当能建运行时");
+            // `Store::open` 返回的是 `IntoFuture`（可取消 future）而不是 `Future`，
+            // 所以用 async 块包一层再交给 `block_on`。
             let store = store_runtime
-                .block_on(Store::open(&server_storage))
+                .block_on(async { Store::open(&server_storage).await })
                 .expect("服务端应当能打开存储");
             let service = KbService::new(store);
 

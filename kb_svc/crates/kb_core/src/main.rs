@@ -24,9 +24,10 @@
 //!
 //! # 客户端怎么找到它
 //!
-//! 端点名字写在 `<运行时目录>/kb-core.ipc`；客户端（`kb_svc_servo_ipc::Client`）
-//! 读这个名字连上来，见 [`kb_svc_servo_ipc::name_file_in`] 与
-//! [`serve_`] 的模块文档。
+//! 服务端启动时在 `<运行时目录>` 下生成一个「日期 + UUID」命名的端点名字文件
+//! （`kb-<YYYYMMDD>-<uuid>.ipc`，由 `kb_core` 决定）；客户端
+//! （`kb_svc_servo_ipc::Client`）在运行时目录里找到它并连上来，见
+//! [`kb_svc_servo_ipc::new_name_file_in`] 与 [`serve_`] 的模块文档。
 //!
 //! # 用法
 //!

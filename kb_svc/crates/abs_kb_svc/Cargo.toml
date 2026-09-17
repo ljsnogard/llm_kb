@@ -17,7 +17,7 @@ buffex = { workspace = true }
 mm_ptr = { workspace = true }
 
 # 协议数据类型的跨进程表示。
-# 与 `abs_llm` 的临时决策（dev-notes.md §2.5）一致：只给纯数据 enum/struct 派生，
+# 与 `abs_llm` 的临时决策（dev-notes/llm_kb-20260917-1655.md §1.4）一致：只给纯数据 enum/struct 派生，
 # 具体线上格式仍由实现 crate（`kb_svc_servo_ipc` 等）决定。
 #
 # 刻意不开 serde 的 `std`：协议类型本身不需要它。但**必须开 `alloc`**——

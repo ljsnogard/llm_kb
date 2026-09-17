@@ -30,7 +30,7 @@ cargo run -p kb_core
 [<时间戳> INFO  kb_core::serve_] kb_core v0.1.0（协议 v1）
 [<时间戳> INFO  kb_core::serve_] 运行时目录: /run/user/1000/llm_kb
 [<时间戳> INFO  kb_core::serve_] 存储目录: /run/user/1000/llm_kb/storage
-[<时间戳> INFO  kb_core::serve_] IPC 端点文件: /run/user/1000/llm_kb/kb-core.ipc
+[<时间戳> INFO  kb_core::serve_] IPC 端点文件: /run/user/1000/llm_kb/kb-20260917-<uuid>.ipc
 [<时间戳> INFO  kb_core::serve_] 已登记工作区: 0 个
 [<时间戳> INFO  kb_core::serve_] 等待客户端连接（Ctrl-C 退出）
 ```
@@ -41,17 +41,21 @@ cargo run -p kb_core
 
 ```text
 运行时目录/
-└── kb-core.ipc        内容是 ipc-channel 的端点名字（不是 socket 路径本身）
+└── kb-<日期>-<uuid>.ipc     本次启动专属；内容是当前可连的端点名
 ```
 
-服务端每接受一个客户端就**重建端点并重写这个名字**，所以文件里始终是
-"当前有效的那个"；进程被强杀时它可能残留（下一个客户端会重试到超时），
-重新启动 `kb_core` 会把它清掉。
+**文件名由 `kb_core` 决定**，沿用旧 `plugin_socket` 的「日期 + UUID」约定：
+每次启动都独一无二，历史残留不会挡路。文件名的语义是"这个服务端实例"，
+**内容**才是"当前可连的端点名"——服务端每接受一个客户端就重建端点并把新端点名
+写回去，没有在等连接时写空串。
+
+进程被强杀时名字文件会留下（内容指向已经不存在的端点），客户端会重试到超时；
+重新启动 `kb_core` 时会把运行时目录里所有 `kb-*.ipc` 清掉。
 
 不想污染用户目录时，把两个目录都指到 `/tmp`：
 
 ```bash
-cargo run -p kb_core -- --runtime-dir /tmp/kb-demo/run --storage-dir /tmp/kb-demo/data
+cargo run -p kb_core -- --runtime-dir /tmp/kb-core/run --storage-dir /tmp/kb-core/data
 ```
 
 ### 1.2 从零跑完一轮增删查改
@@ -66,7 +70,7 @@ cargo run -p kb_core -- --runtime-dir /tmp/kb-demo/run --storage-dir /tmp/kb-dem
 use abs_kb_svc::v1::desktop::TrWorkspaceService;
 use kb_svc_servo_ipc::Client;
 
-let client = Client::connect("/tmp/kb-demo/run")?;
+let client = Client::connect("/tmp/kb-core/run")?;
 let workspaces = client.list_workspaces().await?;
 ```
 
@@ -78,8 +82,8 @@ let workspaces = client.list_workspaces().await?;
 cargo build -p kb_core
 
 kb() { ./target/debug/kb-core \
-  --runtime-dir /tmp/kb-demo/run \
-  --storage-dir /tmp/kb-demo/data "$@"; }
+  --runtime-dir /tmp/kb-core/run \
+  --storage-dir /tmp/kb-core/data "$@"; }
 
 # ── 增：新建工作区与会话，标识由 kb_core 生成 ──────────────────────
 WID=$(kb workspace add --name 笔记 --path /tmp/notes | cut -f1)
@@ -141,10 +145,11 @@ $ kb workspace remove "$WID"
 cargo test -p kb_core
 ```
 
-预期 25 项全部 `ok`，其中覆盖了存储语义、命令行解析，以及**整条 IPC 链路**：
+预期 26 项全部 `ok`，其中覆盖了存储语义、命令行解析，以及**整条 IPC 链路**：
 
 ```text
 test ipc_::tests_::ipc_round_trip_reaches_the_local_store_ ... ok     # 客户端→IPC→Store→磁盘
+test store_::tests_::store_operations_honor_cancellation_ ... ok     # 取消令牌真的生效且不留副作用
 test ipc_::tests_::store_errors_map_to_protocol_codes_ ... ok         # 存储错误 → ErrorCode
 test store_::tests_::add_workspace_writes_documented_layout_ ... ok   # 文件落在约定路径
 test store_::tests_::remove_workspace_cascades_sessions_ ... ok       # 删工作区级联删会话
@@ -173,7 +178,7 @@ kb-core [--runtime-dir <目录>] [--storage-dir <目录>] [<子命令>]
 
 | 选项 | 默认值 | 说明 |
 | :--- | :--- | :--- |
-| `--runtime-dir <目录>` | `$XDG_RUNTIME_DIR/llm_kb`（回退系统临时目录下的 `llm_kb`） | 运行时目录。IPC 端点名字文件 `kb-core.ipc` 放在这里。 |
+| `--runtime-dir <目录>` | `$XDG_RUNTIME_DIR/llm_kb`（回退系统临时目录下的 `llm_kb`） | 运行时目录。IPC 端点名字文件 `kb-<日期>-<uuid>.ipc` 放在这里。 |
 | `--storage-dir <目录>` | `<运行时目录>/storage` | 工作区与会话的存储目录。显式给出时与运行时目录完全独立。 |
 | `-h` / `--help` | — | 打印用法说明。 |
 
@@ -270,11 +275,22 @@ kb-core [--runtime-dir <目录>] [--storage-dir <目录>] [<子命令>]
 "换成数据库"这件事有明确的边界：下一轮 IPC 的请求处理只依赖 `Store` 的方法，
 替换实现时不需要动请求/应答的代码。
 
-存储层的公开方法是普通 `async fn`，没有用 `gen_mcf2::gen_may_cancel_future`
-包成可取消 future：本 crate 的依赖链上**不存在** `gen_mcf2`
-（根 `Cargo.toml` 里的 `abs_cancel` 尚无任何成员使用），因此适用
-`AGENTS.md` 第 4 条的例外。将来 IPC 层引入取消语义时这一层可以原样保留——
-文件操作本身足够短，取消的价值在传输层。
+存储层**没有裸 `async fn`**：每个操作都由 `gen_mcf2::gen_may_cancel_future`
+展开成一对类型，因此两条调用路径都可用：
+
+```text
+store.list_workspaces().await?                      // 不可取消
+store.list_workspaces().may_cancel_with(t).await?   // 可取消
+```
+
+取消的落点是 `store_::race_cancel_`：整个操作体与取消信号赛跑，令牌先触发就返回
+`StoreError::Cancelled`，尚未完成的等待随 future 一起被丢弃。
+`KbService` 把 IPC 请求带的令牌继续传给它（`.may_cancel_with(cancel)`），
+所以"客户端撤销了一次调用"能一路传到最后一次文件等待。
+
+私有辅助（`read_json_` / `write_json_` / `create_dir_all_` …）**没有各自再包一层
+宏**：它们只在已经被令牌包住的操作体里被调用，等待会随外层 future 一起被丢弃，
+没有第二个调用者需要独立的 future 类型。细节与理由见 `src/store_/mod.rs` 的模块文档。
 
 ### 4.4 与 `abs_kb_svc` 协议的关系
 

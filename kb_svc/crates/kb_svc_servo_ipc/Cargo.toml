@@ -27,6 +27,9 @@ futures-lite = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
 
+# 端点名字文件里的 UUID 段（`kb-<日期>-<uuid>.ipc`）。
+uuid = { version = "1.*", features = ["v4", "fast-rng"] }
+
 [dev-dependencies]
 # 端到端测试要造临时 runtime 目录。
 tempfile = { version = "3.*" }

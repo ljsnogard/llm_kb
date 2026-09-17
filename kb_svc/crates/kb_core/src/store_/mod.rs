@@ -2,9 +2,9 @@
 //!
 //! # 为什么暂时是本地文件
 //!
-//! `kb_core` 最终的载体是 Turso 数据库，但 IPC 通道（`kb_svc_servo_ipc`）尚未接通。
-//! 为了让「工作区 / 会话的增删查改」这条业务链路先能跑起来并接受检验，本阶段用
-//! 本地文件代替数据库。**替换的边界就是本模块**：语义（谁存在、谁属于谁、
+//! `kb_core` 最终的载体是 Turso 数据库，但数据库还没接。为了让
+//! 「工作区 / 会话的增删查改」这条业务链路先能跑起来并接受检验，本阶段用本地
+//! 文件代替数据库。**替换的边界就是本模块**：语义（谁存在、谁属于谁、
 //! 删除是否级联）保持不变，换实现时只替换 [`Store`]。
 //!
 //! # 布局（对外约定）
@@ -26,33 +26,54 @@
 //!
 //! 1. **标识必须能安全地当文件名**：只允许 ASCII 字母、数字、`-`、`_`，且不超过
 //!    128 字节。协议把标识当作不透明字符串，因此不能假定它一定由
-//!    `generate()` 产生；直接拿它拼路径会给出 `../` 穿越的机会，因此
-//!    `layout_::check_id_` 在**拼路径之前**就把它挡下来。
-//! 2. **写入先落临时文件再 `rename`**：读到的文件要么是旧内容、要么是新内容，
-//!    不会是半个 JSON。
-//! 3. **会话属于工作区**：`create_session` / `list_sessions` 会先确认工作区存在，
-//!    删工作区会级联删掉它的会话目录。
+//!    `generate()` 产生；含 `../` 的标识会在碰盘之前就被拒绝。
+//! 2. **写入先落临时文件再 `rename`**：读到的内容要么是旧的、要么是新的，
+//!    不会是半个 JSON。进程被强杀时最坏留下一个 `*.json.tmp`。
+//! 3. **会话属于工作区**：`create_session` / `list_sessions` 会先确认工作区存在；
+//!    删除工作区会级联删除它的会话目录。工作区不存在时 `list_sessions`
+//!    **返回错误而不是空列表**——否则客户端把标识写错时会误以为"这里没有会话"。
 //!
-//! # 关于取消令牌
+//! # 每个操作都是可取消的
 //!
-//! 本 crate 的依赖链里**没有** `gen_mcf2` / `gen_may_cancel_future`
-//! （见根 `Cargo.toml`，`abs_cancel` 尚未被任何成员使用），因此这里按
-//! `AGENTS.md` 第 4 条的例外写成普通 `async fn`，而不是可取消 future。
-//! 将来 IPC 层引入取消语义时，这一层可以原样保留——文件操作本身足够短，
-//! 取消的价值在传输层而不在这里。
+//! 本模块**没有手写的对外 `async fn`**：每个操作都由
+//! [`gen_mcf2::gen_may_cancel_future`] 展开出一对类型——`XxxAsync`
+//! （提供 `IntoFuture`，即不可取消路径）与配套的 `XxxFuture`
+//! （`.may_cancel_with(token)` 之后的可取消路径）：
+//!
+//! ```text
+//! store.list_workspaces().await?                      // 不可取消
+//! store.list_workspaces().may_cancel_with(t).await?   // 可取消
+//! ```
+//!
+//! 取消的落点在 [`race_cancel_`]：**整个操作体**与取消信号赛跑，令牌先触发就
+//! 返回 [`StoreError::Cancelled`]，尚未完成的等待随 future 一起被丢弃。
+//! "丢弃"对 `compio::fs` 是真的取消，对 `spawn_blocking` 里的阻塞任务则只是
+//! **不再等它**——代价换来的是调用方不会被挂住。
+//!
+//! ## 内部辅助函数为什么不各自再包一层宏
+//!
+//! [`create_dir_all_`] / [`read_json_`] / [`write_json_`] 这些私有辅助**只在上面
+//! 那些已经被取消令牌包住的操作体里**被调用：它们的等待会随外层 future 被丢弃
+//! 而放弃，因此不再各自生成一套 future 类型（没有第二个调用者需要它）。
+//! 它们**没有**假定"调用者不会取消"，只是把这件事交给唯一的外层统一处理。
+//! 唯一一个不 await 任何东西的取消判断被提成了 [`cancel_guard_`]。
 
 mod error_;
 mod layout_;
 
 pub use error_::StoreError;
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::task::Poll;
 
+use abs_cancel::TrCancellationToken;
 use abs_kb_svc::v1::desktop::{
     SessionDetail, SessionId, SessionList, SessionSummary, Turn, Workspace, WorkspaceId,
     WorkspaceList,
 };
 use abs_llm::v1::cont::Role;
+use gen_mcf2::gen_may_cancel_future;
 use layout_::{
     check_id_, session_file_, sessions_dir_, sessions_root_, workspace_file_, workspaces_dir_,
 };
@@ -76,21 +97,17 @@ pub struct Store {
     root_: PathBuf,
 }
 
+/// 每个操作都返回一个 `gen_mcf2` 展开的可取消 future，而不是裸 `async fn`。
+///
+/// 这些构造器本身是**同步**的：它们只负责把参数装进 future，真正的等待发生在
+/// `.await` 或 `.may_cancel_with(token).await` 上。
 impl Store {
     /// 打开（必要时创建）一个存储根目录。
     ///
     /// 会顺手建好 `workspaces/` 与 `sessions/`，这样"目录树长什么样"在第一次
     /// 启动后就能直接看到，不必等第一个对象被写入。
-    ///
-    /// # Errors
-    ///
-    /// 目录创建失败时返回 [`StoreError::Io`]。
-    pub async fn open(root: impl Into<PathBuf>) -> Result<Self, StoreError> {
-        let root = root.into();
-        create_dir_all_(&root).await?;
-        create_dir_all_(&workspaces_dir_(&root)).await?;
-        create_dir_all_(&sessions_root_(&root)).await?;
-        Ok(Self { root_: root })
+    pub fn open<'r>(root: &'r Path) -> OpenAsync<'r, 'r> {
+        OpenAsync::new(root)
     }
 
     /// 存储根目录。
@@ -101,85 +118,40 @@ impl Store {
     // ── 工作区 ──────────────────────────────────────────────────────────
 
     /// 列出全部工作区，按标识升序。
-    ///
-    /// # Errors
-    ///
-    /// 目录不可读或某个文件不是合法 JSON 时返回错误。
-    pub async fn list_workspaces(&self) -> Result<WorkspaceList, StoreError> {
-        let files = list_json_files_(&workspaces_dir_(&self.root_)).await?;
-        let mut workspaces = Vec::with_capacity(files.len());
-        for file in files {
-            workspaces.push(read_json_::<Workspace>(&file, "工作区", &file_stem_(&file)).await?);
-        }
-        workspaces.sort_by(|left, right| left.workspace_id.cmp(&right.workspace_id));
-        Ok(WorkspaceList { workspaces })
+    pub fn list_workspaces<'f>(&'f self) -> ListWorkspacesAsync<'f, 'f> {
+        ListWorkspacesAsync::new(self)
     }
 
     /// 读取一个工作区。
-    ///
-    /// # Errors
-    ///
-    /// 标识不合法返回 [`StoreError::InvalidId`]；文件不存在返回
-    /// [`StoreError::NotFound`]。
-    pub async fn get_workspace(&self, workspace_id: &WorkspaceId) -> Result<Workspace, StoreError> {
-        check_id_("工作区", workspace_id.as_str())?;
-        let path = workspace_file_(&self.root_, workspace_id.as_str());
-        read_json_(&path, "工作区", workspace_id.as_str()).await
+    pub fn get_workspace<'f>(&'f self, workspace_id: &'f WorkspaceId) -> GetWorkspaceAsync<'f, 'f> {
+        GetWorkspaceAsync::new(self, workspace_id)
     }
 
     /// 新建一个工作区，标识由本进程生成。
     ///
-    /// 返回的对象里带着新分配的 [`WorkspaceId`]；调用方（下一轮的 IPC 层）
-    /// 负责把它连同客户端提交的 `LocalId` 一起回给客户端。
-    ///
-    /// # Errors
-    ///
-    /// 落盘失败时返回错误。
-    pub async fn add_workspace(&self, name: &str, path: &str) -> Result<Workspace, StoreError> {
-        let workspace = Workspace {
-            workspace_id: WorkspaceId::generate(),
-            name: name.to_string(),
-            path: path.to_string(),
-        };
-        self.save_workspace(&workspace).await?;
-        Ok(workspace)
+    /// 返回的对象里带着新分配的 [`WorkspaceId`]；IPC 层负责把它连同客户端提交的
+    /// `LocalId` 一起回给客户端。
+    pub fn add_workspace<'f>(&'f self, name: &'f str, path: &'f str) -> AddWorkspaceAsync<'f, 'f> {
+        AddWorkspaceAsync::new(self, name, path)
     }
 
     /// 写入（覆盖）一个工作区。
     ///
     /// 这是工作区的"改"：重命名、改路径都走这里。它是**原样落盘**的，
     /// 不做任何字段推导。
-    ///
-    /// # Errors
-    ///
-    /// 标识不合法返回 [`StoreError::InvalidId`]。
-    pub async fn save_workspace(&self, workspace: &Workspace) -> Result<(), StoreError> {
-        check_id_("工作区", workspace.workspace_id.as_str())?;
-        let path = workspace_file_(&self.root_, workspace.workspace_id.as_str());
-        write_json_(&path, workspace).await
+    pub fn save_workspace<'f>(&'f self, workspace: &'f Workspace) -> SaveWorkspaceAsync<'f, 'f> {
+        SaveWorkspaceAsync::new(self, workspace)
     }
 
     /// 删除一个工作区，并级联删除它名下的全部会话。
     ///
     /// 级联是刻意的：会话的归属字段就是 `workspace_id`，工作区没了，
     /// 这些会话既列不出来也读不出来，留着只会变成垃圾。
-    ///
-    /// # Errors
-    ///
-    /// 工作区不存在返回 [`StoreError::NotFound`]。
-    pub async fn remove_workspace(&self, workspace_id: &WorkspaceId) -> Result<(), StoreError> {
-        check_id_("工作区", workspace_id.as_str())?;
-
-        // 顺序：先删会话目录，再删工作区文件。反过来会留下"工作区已消失、
-        // 会话目录还在"的孤儿状态；按当前顺序中断，最坏也只是工作区被回退成
-        // "存在但没有会话"，仍然自洽。
-        remove_dir_all_(&sessions_dir_(&self.root_, workspace_id.as_str())).await?;
-        remove_file_checked_(
-            &workspace_file_(&self.root_, workspace_id.as_str()),
-            "工作区",
-            workspace_id.as_str(),
-        )
-        .await
+    pub fn remove_workspace<'f>(
+        &'f self,
+        workspace_id: &'f WorkspaceId,
+    ) -> RemoveWorkspaceAsync<'f, 'f> {
+        RemoveWorkspaceAsync::new(self, workspace_id)
     }
 
     // ── 会话 ────────────────────────────────────────────────────────────
@@ -188,79 +160,30 @@ impl Store {
     ///
     /// 列表里**不含消息正文**：正文通过 [`Store::get_session`] 按需拉取，
     /// 这与协议里"只发差异、不整棵树"的约定一致。
-    ///
-    /// # Errors
-    ///
-    /// 工作区不存在返回 [`StoreError::NotFound`]——**刻意不返回空列表**，
-    /// 否则客户端把工作区标识写错时，会看到"这个工作区一个会话都没有"，
-    /// 而不是"你指的这个地方不存在"。
-    pub async fn list_sessions(
-        &self,
-        workspace_id: &WorkspaceId,
-    ) -> Result<SessionList, StoreError> {
-        self.get_workspace(workspace_id).await?;
-
-        let files = list_json_files_(&sessions_dir_(&self.root_, workspace_id.as_str())).await?;
-        let mut sessions = Vec::with_capacity(files.len());
-        for file in files {
-            let detail = read_json_::<SessionDetail>(&file, "会话", &file_stem_(&file)).await?;
-            sessions.push(detail.summary);
-        }
-        sessions.sort_by(|left, right| {
-            right
-                .updated_at_millis
-                .cmp(&left.updated_at_millis)
-                .then_with(|| left.session_id.cmp(&right.session_id))
-        });
-        Ok(SessionList { sessions })
+    pub fn list_sessions<'f>(&'f self, workspace_id: &'f WorkspaceId) -> ListSessionsAsync<'f, 'f> {
+        ListSessionsAsync::new(self, workspace_id)
     }
 
     /// 读取一个会话的完整内容（摘要 + 全部消息）。
-    ///
-    /// # Errors
-    ///
-    /// 会话不存在返回 [`StoreError::NotFound`]。
-    pub async fn get_session(
-        &self,
-        workspace_id: &WorkspaceId,
-        session_id: &SessionId,
-    ) -> Result<SessionDetail, StoreError> {
-        check_id_("工作区", workspace_id.as_str())?;
-        check_id_("会话", session_id.as_str())?;
-        let path = session_file_(&self.root_, workspace_id.as_str(), session_id.as_str());
-        read_json_(&path, "会话", session_id.as_str()).await
+    pub fn get_session<'f>(
+        &'f self,
+        workspace_id: &'f WorkspaceId,
+        session_id: &'f SessionId,
+    ) -> GetSessionAsync<'f, 'f> {
+        GetSessionAsync::new(self, workspace_id, session_id)
     }
 
     /// 在某个工作区下新建一个会话，标识由本进程生成。
     ///
-    /// `title` 为 `None` 或空白时，从 `turns` 里第一条用户消息推导
-    /// （见 `derive_title_`）；`turns` 是客户端在离线期间攒下的历史，
-    /// 通常为空。
-    ///
-    /// # Errors
-    ///
-    /// 工作区不存在返回 [`StoreError::NotFound`]。
-    pub async fn create_session(
-        &self,
-        workspace_id: &WorkspaceId,
+    /// `title` 为 `None` 或空白时，从 `turns` 里第一条用户消息推导；
+    /// `turns` 是客户端在离线期间攒下的历史，通常为空。
+    pub fn create_session<'f>(
+        &'f self,
+        workspace_id: &'f WorkspaceId,
         title: Option<String>,
         turns: Vec<Turn>,
-    ) -> Result<SessionSummary, StoreError> {
-        self.get_workspace(workspace_id).await?;
-
-        let summary = SessionSummary {
-            session_id: SessionId::generate(),
-            workspace_id: workspace_id.clone(),
-            title: normalize_title_(title, &turns),
-            updated_at_millis: now_millis_(),
-            turn_count: turn_count_of_(&turns),
-        };
-        let detail = SessionDetail {
-            summary: summary.clone(),
-            turns,
-        };
-        self.save_session(&detail).await?;
-        Ok(summary)
+    ) -> CreateSessionAsync<'f, 'f> {
+        CreateSessionAsync::new(self, workspace_id, title, turns)
     }
 
     /// 写入（覆盖）一个会话。
@@ -268,88 +191,454 @@ impl Store {
     /// **原样落盘**：调用方要自己保证摘要与 `turns` 一致。只是改标题/追加消息时，
     /// 用 [`Store::rename_session`] 与 [`Store::append_turns`] 更安全，
     /// 它们会顺手刷新 `turn_count` 与 `updated_at_millis`。
-    ///
-    /// # Errors
-    ///
-    /// 标识不合法返回 [`StoreError::InvalidId`]。
-    pub async fn save_session(&self, detail: &SessionDetail) -> Result<(), StoreError> {
-        check_id_("工作区", detail.summary.workspace_id.as_str())?;
-        check_id_("会话", detail.summary.session_id.as_str())?;
-
-        let dir = sessions_dir_(&self.root_, detail.summary.workspace_id.as_str());
-        create_dir_all_(&dir).await?;
-        let path = session_file_(
-            &self.root_,
-            detail.summary.workspace_id.as_str(),
-            detail.summary.session_id.as_str(),
-        );
-        write_json_(&path, detail).await
+    pub fn save_session<'f>(&'f self, detail: &'f SessionDetail) -> SaveSessionAsync<'f, 'f> {
+        SaveSessionAsync::new(self, detail)
     }
 
-    /// 重命名一个会话，并刷新它的活动时间。
-    ///
-    /// 这是会话的"改"。
-    ///
-    /// # Errors
-    ///
-    /// 会话不存在返回 [`StoreError::NotFound`]。
-    pub async fn rename_session(
-        &self,
-        workspace_id: &WorkspaceId,
-        session_id: &SessionId,
-        title: &str,
-    ) -> Result<SessionSummary, StoreError> {
-        let mut detail = self.get_session(workspace_id, session_id).await?;
-        detail.summary.title = normalize_title_(Some(title.to_string()), &detail.turns);
-        detail.summary.updated_at_millis = now_millis_();
-        self.save_session(&detail).await?;
-        Ok(detail.summary)
+    /// 重命名一个会话，并刷新它的活动时间。这是会话的"改"。
+    pub fn rename_session<'f>(
+        &'f self,
+        workspace_id: &'f WorkspaceId,
+        session_id: &'f SessionId,
+        title: &'f str,
+    ) -> RenameSessionAsync<'f, 'f> {
+        RenameSessionAsync::new(self, workspace_id, session_id, title)
     }
 
     /// 向一个会话追加若干条消息，并同步刷新摘要。
     ///
-    /// 这是下一轮「提问 → 增量 → 落库」链路要用到的写入口：摘要里的
-    /// `turn_count` 与 `updated_at_millis` 由本方法维护，调用方不必操心。
-    ///
-    /// # Errors
-    ///
-    /// 会话不存在返回 [`StoreError::NotFound`]。
-    // 目前只有单元测试在调用；下一轮「提问 → 增量 → 落库」会把它接进 IPC 请求
-    // 处理路径。现在保留是为了让那条路径有现成的、语义正确的写入口。
+    /// 这是「提问 → 增量 → 落库」链路要用到的写入口：摘要里的 `turn_count` 与
+    /// `updated_at_millis` 由本方法维护，调用方不必操心。
+    // 目前只有单元测试在调用；接上生成域之后就会进入请求处理路径。
     #[allow(dead_code)]
-    pub async fn append_turns(
-        &self,
-        workspace_id: &WorkspaceId,
-        session_id: &SessionId,
-        turns: &[Turn],
-    ) -> Result<SessionSummary, StoreError> {
-        let mut detail = self.get_session(workspace_id, session_id).await?;
-        detail.turns.extend_from_slice(turns);
-        detail.summary.turn_count = turn_count_of_(&detail.turns);
-        detail.summary.updated_at_millis = now_millis_();
-        self.save_session(&detail).await?;
-        Ok(detail.summary)
+    pub fn append_turns<'f>(
+        &'f self,
+        workspace_id: &'f WorkspaceId,
+        session_id: &'f SessionId,
+        turns: &'f [Turn],
+    ) -> AppendTurnsAsync<'f, 'f> {
+        AppendTurnsAsync::new(self, workspace_id, session_id, turns)
     }
 
     /// 删除一个会话。
-    ///
-    /// # Errors
-    ///
-    /// 会话不存在返回 [`StoreError::NotFound`]。
-    pub async fn remove_session(
-        &self,
-        workspace_id: &WorkspaceId,
-        session_id: &SessionId,
-    ) -> Result<(), StoreError> {
-        check_id_("工作区", workspace_id.as_str())?;
-        check_id_("会话", session_id.as_str())?;
-        remove_file_checked_(
-            &session_file_(&self.root_, workspace_id.as_str(), session_id.as_str()),
-            "会话",
-            session_id.as_str(),
-        )
-        .await
+    pub fn remove_session<'f>(
+        &'f self,
+        workspace_id: &'f WorkspaceId,
+        session_id: &'f SessionId,
+    ) -> RemoveSessionAsync<'f, 'f> {
+        RemoveSessionAsync::new(self, workspace_id, session_id)
     }
+}
+
+// ============================================================================
+// 操作体：宏只能作用于模块级自由函数，所以每个操作在这里展开
+// ============================================================================
+
+/// [`Store::open`] 的操作体。
+#[gen_may_cancel_future(Open, pub)]
+pub async fn open_async<'r, C>(root: &'r Path, cancel: C) -> Result<Store, StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            create_dir_all_(root).await?;
+            create_dir_all_(&workspaces_dir_(root)).await?;
+            create_dir_all_(&sessions_root_(root)).await?;
+            Ok(Store {
+                root_: root.to_path_buf(),
+            })
+        },
+        cancel,
+    )
+    .await
+}
+
+/// [`Store::list_workspaces`] 的操作体。
+#[gen_may_cancel_future(ListWorkspaces, pub)]
+pub async fn list_workspaces_async<'s, C>(
+    store: &'s Store,
+    cancel: C,
+) -> Result<WorkspaceList, StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            let files = list_json_files_(&workspaces_dir_(&store.root_)).await?;
+            let mut workspaces = Vec::with_capacity(files.len());
+            for file in files {
+                workspaces
+                    .push(read_json_::<Workspace>(&file, "工作区", &file_stem_(&file)).await?);
+            }
+            workspaces.sort_by(|left, right| left.workspace_id.cmp(&right.workspace_id));
+            Ok(WorkspaceList { workspaces })
+        },
+        cancel,
+    )
+    .await
+}
+
+/// [`Store::get_workspace`] 的操作体。
+#[gen_may_cancel_future(GetWorkspace, pub)]
+pub async fn get_workspace_async<'s, C>(
+    store: &'s Store,
+    workspace_id: &'s WorkspaceId,
+    cancel: C,
+) -> Result<Workspace, StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            check_id_("工作区", workspace_id.as_str())?;
+            let path = workspace_file_(&store.root_, workspace_id.as_str());
+            read_json_(&path, "工作区", workspace_id.as_str()).await
+        },
+        cancel,
+    )
+    .await
+}
+
+/// [`Store::add_workspace`] 的操作体。
+#[gen_may_cancel_future(AddWorkspace, pub)]
+pub async fn add_workspace_async<'s, C>(
+    store: &'s Store,
+    name: &'s str,
+    path: &'s str,
+    cancel: C,
+) -> Result<Workspace, StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            let workspace = Workspace {
+                workspace_id: WorkspaceId::generate(),
+                name: name.to_string(),
+                path: path.to_string(),
+            };
+            store.save_workspace(&workspace).await?;
+            Ok(workspace)
+        },
+        cancel,
+    )
+    .await
+}
+
+/// [`Store::save_workspace`] 的操作体。
+#[gen_may_cancel_future(SaveWorkspace, pub)]
+pub async fn save_workspace_async<'s, C>(
+    store: &'s Store,
+    workspace: &'s Workspace,
+    cancel: C,
+) -> Result<(), StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            check_id_("工作区", workspace.workspace_id.as_str())?;
+            let path = workspace_file_(&store.root_, workspace.workspace_id.as_str());
+            write_json_(&path, workspace).await
+        },
+        cancel,
+    )
+    .await
+}
+
+/// [`Store::remove_workspace`] 的操作体。
+#[gen_may_cancel_future(RemoveWorkspace, pub)]
+pub async fn remove_workspace_async<'s, C>(
+    store: &'s Store,
+    workspace_id: &'s WorkspaceId,
+    cancel: C,
+) -> Result<(), StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            check_id_("工作区", workspace_id.as_str())?;
+
+            // 顺序：先删会话目录，再删工作区文件。反过来会留下"工作区已消失、
+            // 会话目录还在"的孤儿状态；按当前顺序中断，最坏也只是工作区被回退成
+            // "存在但没有会话"，仍然自洽。
+            remove_dir_all_(&sessions_dir_(&store.root_, workspace_id.as_str())).await?;
+            remove_file_checked_(
+                &workspace_file_(&store.root_, workspace_id.as_str()),
+                "工作区",
+                workspace_id.as_str(),
+            )
+            .await
+        },
+        cancel,
+    )
+    .await
+}
+
+/// [`Store::list_sessions`] 的操作体。
+#[gen_may_cancel_future(ListSessions, pub)]
+pub async fn list_sessions_async<'s, C>(
+    store: &'s Store,
+    workspace_id: &'s WorkspaceId,
+    cancel: C,
+) -> Result<SessionList, StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            store.get_workspace(workspace_id).await?;
+
+            let files =
+                list_json_files_(&sessions_dir_(&store.root_, workspace_id.as_str())).await?;
+            let mut sessions = Vec::with_capacity(files.len());
+            for file in files {
+                let detail = read_json_::<SessionDetail>(&file, "会话", &file_stem_(&file)).await?;
+                sessions.push(detail.summary);
+            }
+            sessions.sort_by(|left, right| {
+                right
+                    .updated_at_millis
+                    .cmp(&left.updated_at_millis)
+                    .then_with(|| left.session_id.cmp(&right.session_id))
+            });
+            Ok(SessionList { sessions })
+        },
+        cancel,
+    )
+    .await
+}
+
+/// [`Store::get_session`] 的操作体。
+#[gen_may_cancel_future(GetSession, pub)]
+pub async fn get_session_async<'s, C>(
+    store: &'s Store,
+    workspace_id: &'s WorkspaceId,
+    session_id: &'s SessionId,
+    cancel: C,
+) -> Result<SessionDetail, StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            check_id_("工作区", workspace_id.as_str())?;
+            check_id_("会话", session_id.as_str())?;
+            let path = session_file_(&store.root_, workspace_id.as_str(), session_id.as_str());
+            read_json_(&path, "会话", session_id.as_str()).await
+        },
+        cancel,
+    )
+    .await
+}
+
+/// [`Store::create_session`] 的操作体。
+#[gen_may_cancel_future(CreateSession, pub)]
+pub async fn create_session_async<'s, C>(
+    store: &'s Store,
+    workspace_id: &'s WorkspaceId,
+    title: Option<String>,
+    turns: Vec<Turn>,
+    cancel: C,
+) -> Result<SessionSummary, StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            store.get_workspace(workspace_id).await?;
+
+            let summary = SessionSummary {
+                session_id: SessionId::generate(),
+                workspace_id: workspace_id.clone(),
+                title: normalize_title_(title, &turns),
+                updated_at_millis: now_millis_(),
+                turn_count: turn_count_of_(&turns),
+            };
+            let detail = SessionDetail {
+                summary: summary.clone(),
+                turns,
+            };
+            store.save_session(&detail).await?;
+            Ok(summary)
+        },
+        cancel,
+    )
+    .await
+}
+
+/// [`Store::save_session`] 的操作体。
+#[gen_may_cancel_future(SaveSession, pub)]
+pub async fn save_session_async<'s, C>(
+    store: &'s Store,
+    detail: &'s SessionDetail,
+    cancel: C,
+) -> Result<(), StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            check_id_("工作区", detail.summary.workspace_id.as_str())?;
+            check_id_("会话", detail.summary.session_id.as_str())?;
+
+            let dir = sessions_dir_(&store.root_, detail.summary.workspace_id.as_str());
+            create_dir_all_(&dir).await?;
+            let path = session_file_(
+                &store.root_,
+                detail.summary.workspace_id.as_str(),
+                detail.summary.session_id.as_str(),
+            );
+            write_json_(&path, detail).await
+        },
+        cancel,
+    )
+    .await
+}
+
+/// [`Store::rename_session`] 的操作体。
+#[gen_may_cancel_future(RenameSession, pub)]
+pub async fn rename_session_async<'s, C>(
+    store: &'s Store,
+    workspace_id: &'s WorkspaceId,
+    session_id: &'s SessionId,
+    title: &'s str,
+    cancel: C,
+) -> Result<SessionSummary, StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            let mut detail = store.get_session(workspace_id, session_id).await?;
+            detail.summary.title = normalize_title_(Some(title.to_string()), &detail.turns);
+            detail.summary.updated_at_millis = now_millis_();
+            store.save_session(&detail).await?;
+            Ok(detail.summary)
+        },
+        cancel,
+    )
+    .await
+}
+
+/// [`Store::append_turns`] 的操作体。
+#[gen_may_cancel_future(AppendTurns, pub)]
+pub async fn append_turns_async<'s, C>(
+    store: &'s Store,
+    workspace_id: &'s WorkspaceId,
+    session_id: &'s SessionId,
+    turns: &'s [Turn],
+    cancel: C,
+) -> Result<SessionSummary, StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            let mut detail = store.get_session(workspace_id, session_id).await?;
+            detail.turns.extend_from_slice(turns);
+            detail.summary.turn_count = turn_count_of_(&detail.turns);
+            detail.summary.updated_at_millis = now_millis_();
+            store.save_session(&detail).await?;
+            Ok(detail.summary)
+        },
+        cancel,
+    )
+    .await
+}
+
+/// [`Store::remove_session`] 的操作体。
+#[gen_may_cancel_future(RemoveSession, pub)]
+pub async fn remove_session_async<'s, C>(
+    store: &'s Store,
+    workspace_id: &'s WorkspaceId,
+    session_id: &'s SessionId,
+    cancel: C,
+) -> Result<(), StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            check_id_("工作区", workspace_id.as_str())?;
+            check_id_("会话", session_id.as_str())?;
+            remove_file_checked_(
+                &session_file_(&store.root_, workspace_id.as_str(), session_id.as_str()),
+                "会话",
+                session_id.as_str(),
+            )
+            .await
+        },
+        cancel,
+    )
+    .await
+}
+
+// ============================================================================
+// 取消
+// ============================================================================
+
+/// 已经取消就立刻收手，不去碰磁盘。
+///
+/// 这是本模块里唯一"直接返回一个结果"的取消判断——它不 await 任何东西，
+/// 因此不需要可取消 future；放在操作体最前面是为了别白干一趟。
+fn cancel_guard_<C>(cancel: &C) -> Result<(), StoreError>
+where
+    C: TrCancellationToken,
+{
+    if cancel.is_cancelled() {
+        Err(StoreError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+/// 让**整个操作**与取消信号赛跑：令牌先触发就放弃尚未完成的等待。
+///
+/// 之所以在操作的最外层赛一次、而不是在每个 await 点各赛一次：
+///
+/// - 语义更简单——"这次调用被取消了"只可能产生一个结果；
+/// - 覆盖更全——操作体内部的私有辅助（`read_json_` / `write_json_` /
+///   `spawn_blocking` 等）不需要各自携带令牌，它们的等待会随这里被丢弃；
+/// - 与 `gen_mcf2` 的分工一致：宏负责产出可取消的 future 类型，本函数负责
+///   在令牌触发时把它结束掉。
+///
+/// 代价：操作是分步的，取消可能停在中间（例如已经写了 `.tmp` 但还没 `rename`）。
+/// 落盘约定（先写临时文件再 `rename`）保证了这种中间态不会被当成对象读出来。
+async fn race_cancel_<T, F, C>(work: F, cancel: C) -> Result<T, StoreError>
+where
+    F: Future<Output = Result<T, StoreError>>,
+    C: TrCancellationToken,
+{
+    let mut work = std::pin::pin!(work);
+    let cancellation = cancel.cancellation();
+    let mut cancellation = std::pin::pin!(cancellation);
+
+    std::future::poll_fn(|context| {
+        if let Poll::Ready(outcome) = work.as_mut().poll(context) {
+            return Poll::Ready(outcome);
+        }
+        if cancellation.as_mut().poll(context).is_ready() {
+            return Poll::Ready(Err(StoreError::Cancelled));
+        }
+        Poll::Pending
+    })
+    .await
 }
 
 // ── 内部辅助 ────────────────────────────────────────────────────────────
@@ -549,6 +838,7 @@ fn derive_title_(turns: &[Turn]) -> String {
 #[cfg(test)]
 mod tests_ {
     use super::*;
+    use abs_cancel::{CancelledToken, NonCancellableToken, TrMayCancel};
     use abs_kb_svc::v1::desktop::{TurnId, TurnState};
 
     /// 造一个临时存储根目录。
@@ -1077,5 +1367,43 @@ mod tests_ {
 
         assert_eq!(summary.title.chars().count(), TITLE_MAX_CHARS_ + 1);
         assert!(summary.title.ends_with('…'), "实际标题: {}", summary.title);
+    }
+
+    /// 测试存储操作的可取消路径真的可用，且取消之后不留下副作用。
+    ///
+    /// - 手段：对一个空的存储分别用 `CancelledToken` 与 `NonCancellableToken`
+    ///   走 `.may_cancel_with(token)`——前者调 `add_workspace`，后者也调一次。
+    /// - 判断：已取消的令牌让操作立刻返回 [`StoreError::Cancelled`]，并且
+    ///   **没有碰盘**（再列出工作区是空的）；不可取消的令牌照常完成。
+    ///   这条测试守着"每个操作都由 `gen_mcf2` 展开、真的接受取消令牌"这件事。
+    #[compio::test]
+    async fn store_operations_honor_cancellation_() {
+        let (_guard, root) = temp_root_();
+        let store = Store::open(&root).await.expect("应当能打开存储");
+
+        let cancelled = store
+            .add_workspace("不该落盘", "/tmp/nope")
+            .may_cancel_with(CancelledToken::new())
+            .await;
+        assert!(
+            matches!(cancelled, Err(StoreError::Cancelled)),
+            "已经取消的令牌应当让操作立刻收手，实际: {cancelled:?}"
+        );
+        assert!(
+            store
+                .list_workspaces()
+                .await
+                .expect("应当能列出工作区")
+                .workspaces
+                .is_empty(),
+            "取消之后不应当留下任何工作区"
+        );
+
+        let workspace = store
+            .add_workspace("笔记", "/tmp/notes")
+            .may_cancel_with(NonCancellableToken::new())
+            .await
+            .expect("不可取消的令牌应当让操作照常完成");
+        assert_eq!(workspace.name, "笔记");
     }
 }

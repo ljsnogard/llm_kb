@@ -292,7 +292,7 @@ LocalStore.open()  →  AppController(snapshot)  →  runApp
    以及同一次同步被重发时如何避免重复创建工作区（幂等性由 `LocalId` 承担，需要 kb_core 侧实现）。
 5. **批量同步**：本轮是"一个工作区一个请求、一个会话一个请求"，
    离线攒了很多对象时会变成 N 次往返；是否需要一次 `SyncLocalState` 批量提交。
-6. **`Conversation` 语义**：旧设计的"对话上下文归 agent 所有"（`dev-notes.md` §2.3）
+6. **`Conversation` 语义**：旧设计的"对话上下文归 agent 所有"（[`llm_kb-20260917-1655.md`](llm_kb-20260917-1655.md) §1.2）
    与"会话与历史归 `kb_core`"需要对齐——两者都成立，但边界要写清楚
    （agent 持有 LLM 上下文，`kb_core` 持有面向界面的历史）。
 
@@ -319,7 +319,7 @@ LocalStore.open()  →  AppController(snapshot)  →  runApp
 
 ### 8.1 验证环境说明
 
-`~/.cargo` 在本机是只读的（见 `dev-notes.md` §6），因此需要一个可写的 `CARGO_HOME`；
+`~/.cargo` 在本机是只读的（见 [`llm_kb-20260917-1655.md`](llm_kb-20260917-1655.md) §4），因此需要一个可写的 `CARGO_HOME`；
 本仓库使用 `external/cargo-home/`（根 `.gitignore` 已忽略）。这不是项目配置问题。
 
 > 本记录早先版本曾提到一个"隔离验证工程"（`external/abs_kb_svc-harness/`），
