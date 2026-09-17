@@ -1,0 +1,40 @@
+
+===== env =====
+rustc 1.100.0-nightly (0ed41eb41 2026-09-04)
+Linux RustLab 6.12.99-production+truenas #1 SMP PREEMPT_DYNAMIC Wed Aug 12 13:43:54 UTC 2026 x86_64 GNU/Linux
+
+===== cargo build =====
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+build exit: 0
+
+===== 依赖规模 =====
+cargo tree 行数: 55
+去重 crate 数: 41
+
+===== 1. typed 通道：String / Vec<String> / Vec<u8> 直发（跨进程，3 次往返） =====
+one-shot name: /tmp/.tmpZWd0nE/socket
+CLIENT-DONE typed round_trips=3 elapsed=3.108759ms first=Some("echo:第 0 个问题：你好，知识库/4096")
+SERVER-DONE typed requests=3
+
+===== 2. bytes_channel：完全不用 serde 的原始字节通路（含 4 MiB 单条） =====
+one-shot name: /tmp/.tmpcozDi8/socket
+CLIENT-DONE bytes sent=3 elapsed=12.171176ms acked=[(12, 40), (12, 65536), (12, 4194304)]
+SERVER-DONE bytes messages=3 total_bytes=4259880
+
+===== 3. IpcSharedMemory：4 MiB 只传句柄，消息类型零用户 serde =====
+one-shot name: /tmp/.tmpzCiBa3/socket
+CLIENT-DONE shm size=4194304 build=66.410795ms send=485.751µs reply="len=4194304 checksum=12582912"
+SERVER-DONE shm received_bytes=4194304
+
+===== 4. 异步：IpcReceiver::to_stream() 在 tokio 多线程下消费 500 条 =====
+STREAM-DONE received=500 elapsed=11.750239ms ticker_ticks=10
+
+===== 5. 对比：内联 recv() 饿死运行时 vs to_stream() 不阻塞 =====
+BLOCKING-DEMO inline: value=1 elapsed=300.568701ms ticker_ticks=0 | stream: value=2 elapsed=300.96836ms ticker_ticks=26
+
+===== 遗留资源 =====
+--- one-shot socket 文件 ---
+-rw-r--r-- 1 root root 22 Sep 17 12:53 /root/projects/me.noli/llm_kb/external/ipc-channel-poc/target/ipc-name.txt
+--- 系统临时目录里的 ipc-channel socket ---
+
+===== DONE =====

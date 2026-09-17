@@ -1,0 +1,322 @@
+
+===== env =====
+rustc 1.100.0-nightly (0ed41eb41 2026-09-04)
+cargo 1.100.0-nightly (b2e9d5f9d 2026-09-02)
+uname: Linux RustLab 6.12.99-production+truenas #1 SMP PREEMPT_DYNAMIC Wed Aug 12 13:43:54 UTC 2026 x86_64 GNU/Linux
+shm dir: drwxr-xr-x 2 root root 40 Sep 17 12:02 /dev/shm
+XDG_RUNTIME_DIR=/run/user/0
+
+===== cargo build (依赖下载 + 编译) =====
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ipc-poc` (bin "ipc-poc") generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+build exit: 0
+
+===== iceoryx2 依赖规模 =====
+cargo tree 行数: 169
+去重 crate 数: 87
+
+===== e2e pub/sub (两个进程, 定长结构体载荷) =====
+--- pub.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+PUB-DONE total=100
+--- sub.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+SUB-DONE received=100 last_seq=99 first_text="delta-0-这是一个中文增量分片" turn_id_ok=true
+
+===== e2e request/response (两个进程) =====
+--- cli.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+CLI-DONE status=0 body="echo:你好，请介绍一下知识库"
+--- srv.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+SRV-GOT kind=0 question="你好，请介绍一下知识库"
+
+===== e2e 4MiB 单次载荷 (切片载荷 + write_from_fn) =====
+--- big-pub.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+BIG-PUB-DONE bytes=4194304 loan_write_send=149.3068ms
+--- big-sub.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+BIG-SUB-DONE len=4194304 recv=825.904131ms sanity=true
+
+===== e2e 4MiB 不配置 initial_max_slice_len (预期 LoanError) =====
+--- big-pub-default.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+BIG-PUB-DEFAULT loan_error=ExceedsMaxLoanSize
+
+===== e2e 4MiB initial_max_slice_len(BIG_CAP) + AllocationStrategy::Static =====
+--- big-pub-static.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+BIG-PUB-STATIC-DONE bytes=4194304 loan_write_send=147.120646ms
+--- big-sub.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+BIG-SUB-DONE len=4194304 recv=802.824106ms sanity=true
+
+===== e2e 变长载荷 (13B / 60KB / 512KB 混合) =====
+--- var-pub.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+VAR-PUB-DONE count=4
+--- var-sub.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+VAR-SUB-DONE lens=[32, 68, 196634, 1572890]
+
+===== e2e 二次启动 (验证无残留导致的失败) =====
+--- sub2.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+SUB-DONE received=100 last_seq=99 first_text="delta-0-这是一个中文增量分片" turn_id_ok=true
+
+===== e2e 崩溃恢复 (SIGKILL 发布者后再通信) =====
+killed publisher pid=61 (SIGKILL)
+--- sub3.log ---
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+SUB-DONE received=100 last_seq=99 first_text="delta-0-这是一个中文增量分片" turn_id_ok=true
+
+===== threadsafe (ipc_threadsafe::Service 的 Send/Sync) =====
+0 [W] "Config::global_config()" 
+| No config file was loaded, a config with default values will be used. 
+THREADSAFE-DONE received 42
+
+===== negative compile cases (预期每个都失败) =====
+
+--- neg/string_payload ---
+exit: 101
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `enum-payload`, convert the file stem
+help: to change the binary name to `move-across-thread`, convert the file stem
+help: to change the binary name to `nested-string`, convert the file stem
+help: to change the binary name to `option-payload`, convert the file stem
+help: to change the binary name to `send-required`, convert the file stem
+help: to change the binary name to `string-payload`, convert the file stem
+help: to change the binary name to `vec-payload`, convert the file stem
+error[E0277]: the trait bound `String: ZeroCopySend` is not satisfied
+error[E0599]: the method `open_or_create` exists for struct `Builder<String, (), Service>`, but its trait bounds were not satisfied
+error: could not compile `neg` (bin "string_payload") due to 2 previous errors
+
+--- neg/vec_payload ---
+exit: 101
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `enum-payload`, convert the file stem
+help: to change the binary name to `move-across-thread`, convert the file stem
+help: to change the binary name to `nested-string`, convert the file stem
+help: to change the binary name to `option-payload`, convert the file stem
+help: to change the binary name to `send-required`, convert the file stem
+help: to change the binary name to `string-payload`, convert the file stem
+help: to change the binary name to `vec-payload`, convert the file stem
+error[E0277]: the trait bound `Vec<u8>: ZeroCopySend` is not satisfied
+error[E0599]: the method `open_or_create` exists for struct `Builder<Vec<u8>, (), Service>`, but its trait bounds were not satisfied
+error: could not compile `neg` (bin "vec_payload") due to 2 previous errors
+
+--- neg/nested_string ---
+exit: 101
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `enum-payload`, convert the file stem
+help: to change the binary name to `move-across-thread`, convert the file stem
+help: to change the binary name to `nested-string`, convert the file stem
+help: to change the binary name to `option-payload`, convert the file stem
+help: to change the binary name to `send-required`, convert the file stem
+help: to change the binary name to `string-payload`, convert the file stem
+help: to change the binary name to `vec-payload`, convert the file stem
+error[E0277]: the trait bound `String: iceoryx2::prelude::ZeroCopySend` is not satisfied
+  = note: the full name for the type has been written to '/root/projects/me.noli/llm_kb/external/iceoryx2-poc/neg/target/debug/build/neg/cb4663eb87448638/out/nested_string.long-type-15349566142442149769.txt'
+  = note: consider using `--verbose` to print the full type name to the console
+  = note: this error originates in the derive macro `ZeroCopySend` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+--- neg/enum_payload ---
+exit: 0
+RESULT: UNEXPECTED-COMPILE-SUCCESS
+
+--- neg/option_payload ---
+exit: 101
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `enum-payload`, convert the file stem
+help: to change the binary name to `move-across-thread`, convert the file stem
+help: to change the binary name to `nested-string`, convert the file stem
+help: to change the binary name to `option-payload`, convert the file stem
+help: to change the binary name to `send-required`, convert the file stem
+help: to change the binary name to `string-payload`, convert the file stem
+help: to change the binary name to `vec-payload`, convert the file stem
+error[E0277]: the trait bound `Option<u64>: iceoryx2::prelude::ZeroCopySend` is not satisfied
+  = note: the full name for the type has been written to '/root/projects/me.noli/llm_kb/external/iceoryx2-poc/neg/target/debug/build/neg/6cad330ee5cff236/out/option_payload.long-type-17998372573665265748.txt'
+  = note: consider using `--verbose` to print the full type name to the console
+  = note: this error originates in the derive macro `ZeroCopySend` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+--- neg/move_across_thread ---
+exit: 101
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `enum-payload`, convert the file stem
+help: to change the binary name to `move-across-thread`, convert the file stem
+help: to change the binary name to `nested-string`, convert the file stem
+help: to change the binary name to `option-payload`, convert the file stem
+help: to change the binary name to `send-required`, convert the file stem
+help: to change the binary name to `string-payload`, convert the file stem
+help: to change the binary name to `vec-payload`, convert the file stem
+error[E0277]: `Rc<iceoryx2::port::subscriber::SubscriberSharedState<iceoryx2::service::ipc::Service>>` cannot be sent between threads safely
+error: could not compile `neg` (bin "move_across_thread") due to 1 previous error
+
+--- neg/send_required ---
+exit: 101
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `enum-payload`, convert the file stem
+help: to change the binary name to `move-across-thread`, convert the file stem
+help: to change the binary name to `nested-string`, convert the file stem
+help: to change the binary name to `option-payload`, convert the file stem
+help: to change the binary name to `send-required`, convert the file stem
+help: to change the binary name to `string-payload`, convert the file stem
+help: to change the binary name to `vec-payload`, convert the file stem
+error[E0277]: `Rc<iceoryx2::port::subscriber::SubscriberSharedState<iceoryx2::service::ipc::Service>>` cannot be sent between threads safely
+error[E0277]: `Rc<iceoryx2::port::publisher::PublisherSharedState<iceoryx2::service::ipc::Service>>` cannot be sent between threads safely
+error: could not compile `neg` (bin "send_required") due to 2 previous errors
+
+===== iceoryx2 源码：Global 配置字段 =====
+src dir: /root/projects/me.noli/llm_kb/external/iceoryx2-poc/../cargo-home/registry/src/rsproxy.cn-e3de039b2554c837/iceoryx2-0.9.3
+pub struct Global {
+    root_path: Path,
+    /// Prefix used for all files created during runtime
+    pub prefix: FileName,
+    /// [`Service`](crate::service::Service) settings
+    pub service: Service,
+    /// [`Node`](crate::node::Node) settings
+    pub node: Node,
+    /// Defines the time how long the process will wait until an entity, that shares inter-process
+    /// resources with others, is opened or created. This entity could be for instance a service
+    pub creation_timeout: Duration,
+}
+
+--- Defaults (默认 QoS) 摘要 ---
+pub struct Defaults {
+    /// Default settings for the messaging pattern publish-subscribe
+    pub publish_subscribe: PublishSubscribe,
+    /// Default settings for the messaging pattern event
+    pub event: Event,
+    /// Default settings for the messaging pattern request-response
+    pub request_response: RequestResonse,
+    /// Default settings for the messaging pattern blackboard
+    pub blackboard: Blackboard,
+}
+
+--- ZeroCopySend trait 定义 ---
+32:pub unsafe trait ZeroCopySend {
+33-    /// The unique identifier of the type. It shall be used to identify a specific type across
+34-    /// processes and languages.
+35-    ///
+36-    /// # Safety
+37-    ///
+38-    ///  * The user must guarantee that all types, also definitions in different languages, have
+39-    ///    the same memory layout.
+40-    unsafe fn type_name() -> &'static str {
+41-        core::any::type_name::<Self>()
+42-    }
+43-
+44-    #[doc(hidden)]
+
+--- ipc / ipc_threadsafe 模块文档 ---
+// Copyright (c) 2023 Contributors to the Eclipse Foundation
+//
+// See the NOTICE file(s) distributed with this work for additional
+// information regarding copyright ownership.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Apache Software License 2.0 which is available at
+// https://www.apache.org/licenses/LICENSE-2.0, or the MIT license
+// which is available at https://opensource.org/licenses/MIT.
+//
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
+//! # Example
+//!
+//! ```
+//! use iceoryx2::prelude::*;
+//!
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! let node = NodeBuilder::new().create::<ipc::Service>()?;
+//!
+//! // use `ipc` as communication variant
+//! let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
+//!     .publish_subscribe::<u64>()
+//!     .open_or_create()?;
+//!
+//! let publisher = service.publisher_builder().create()?;
+//! let subscriber = service.subscriber_builder().create()?;
+//!
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! See [`Service`](crate::service) for more detailed examples.
+
+use core::fmt::Debug;
+use iceoryx2_bb_elementary_traits::testing::abandonable::Abandonable;
+use iceoryx2_cal::shm_allocator::bump_allocator::BumpAllocator;
+use iceoryx2_cal::shm_allocator::pool_allocator::PoolAllocator;
+use iceoryx2_cal::*;
+
+// Copyright (c) 2025 Contributors to the Eclipse Foundation
+//
+// See the NOTICE file(s) distributed with this work for additional
+// information regarding copyright ownership.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Apache Software License 2.0 which is available at
+// https://www.apache.org/licenses/LICENSE-2.0, or the MIT license
+// which is available at https://opensource.org/licenses/MIT.
+//
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
+//! # Example
+//!
+//! ```
+//! use iceoryx2::prelude::*;
+//!
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! let node = NodeBuilder::new().create::<ipc_threadsafe::Service>()?;
+//!
+//! // use `ipc` as communication variant
+//! let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
+//!     .publish_subscribe::<u64>()
+//!     .open_or_create()?;
+//!
+//! let publisher = service.publisher_builder().create()?;
+//! let subscriber = service.subscriber_builder().create()?;
+//!
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! See [`Service`](crate::service) for more detailed examples.
+
+use core::fmt::Debug;
+
+use iceoryx2_bb_elementary_traits::testing::abandonable::Abandonable;
+use iceoryx2_cal::shm_allocator::bump_allocator::BumpAllocator;
+use iceoryx2_cal::shm_allocator::pool_allocator::PoolAllocator;
+use iceoryx2_cal::*;
+
+===== resource leftovers =====
+--- /dev/shm ---
+total 4
+drwxr-xr-x 2 root root  60 Sep 17 12:03 .
+drwxr-xr-x 4 root root 320 Sep 17 12:02 ..
+-rwx------ 1 root root  16 Sep 17 12:02 iox2_9204dd183d1c4d8e1ff592a30766ffa6765aa8b5_node.0_9_3.global_mgmt
+--- /tmp/iceoryx2 (size) ---
+0	/tmp/iceoryx2
+/tmp/iceoryx2
+/tmp/iceoryx2/services
+/tmp/iceoryx2/nodes
+
+===== DONE =====

@@ -8,8 +8,14 @@ description = "The core process of KnowledgeBase service."
 # 只属于本 crate 的依赖直接写在这里；只有跨成员共用的依赖才放 workspace。
 [dependencies]
 env_logger = { version = "0.11.*" }
+kb_svc_salvo = { path = "../kb_svc_salvo" }
 log = { workspace = true }
+tokio = { workspace = true }
 
 [[bin]]
 name = "kb-core"
 path = "src/main.rs"
+
+# 继承根 Cargo.toml 的 [workspace.lints]（见那里的说明）。
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+# 独立的临时验证工程：不属于 llm_kb workspace（`[workspace]` 空表使其自成一个 workspace 根）。
+# 目的：在真实环境里验证 iceoryx2 v0.9.3 的跨进程能力、复杂数据约束与大数据代价。
+[workspace]
+
+[package]
+name = "ipc-poc"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ipc-poc"
+path = "src/main.rs"
+
+[[bin]]
+name = "threadsafe"
+path = "src/bin/threadsafe.rs"
+
+[dependencies]
+iceoryx2 = "=0.9.3"

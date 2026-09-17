@@ -1,0 +1,19 @@
+# 临时验证工程：不属于 llm_kb workspace（空 [workspace] 使其自成一个根）。
+# 目的：验证 servo/ipc-channel 的跨进程能力、String/Vec 直发能力、
+#       IpcSharedMemory 免 serde 路径，以及「阻塞 recv 如何桥接进异步运行时」。
+[workspace]
+
+[package]
+name = "ipc-channel-poc"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ipc-poc"
+path = "src/main.rs"
+
+[dependencies]
+futures-lite = "2"
+ipc-channel = { version = "0.23.0", features = ["async"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }

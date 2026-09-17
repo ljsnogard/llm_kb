@@ -6,5 +6,33 @@ version = "0.1.0"
 description = "ABStraction of KnowledgeBase SerViCe."
 
 [dependencies]
+abs_async_iter = { workspace = true }
+abs_llm = { path = "../abs_llm" }
+abs_str = { workspace = true }
 buffex = { workspace = true }
 mm_ptr = { workspace = true }
+
+# 协议数据类型的跨进程表示。
+# 与 `abs_llm` 的临时决策（dev-notes.md §2.5）一致：只给纯数据 enum/struct 派生，
+# 具体线上格式仍由实现 crate（`kb_svc_servo_ipc` 等）决定。
+#
+# 刻意不开 std/alloc：协议类型本身不需要它们。代价是**不能用 serde 的
+# 内部标签枚举（`#[serde(tag = ...)]`）**，见 `src/v1/desktop/mod.rs` 的说明。
+serde = { version = "1.*", default-features = false, features = ["derive"] }
+
+# 仅用于生成 kb_core 分配的标识（`<前缀>-<uuid-v4>`）。
+uuid = { version = "1.*", features = ["v4", "fast-rng"] }
+
+[dev-dependencies]
+# 校验协议类型在「实现候选真正使用的编解码器」上也能往返。
+# ipc-channel 0.23 用 postcard，见 dev-notes/abs_kb_svc-20260917-1254.md §3。
+postcard = { version = "1.1", default-features = false, features = ["use-std"] }
+serde_json = { version = "1.*" }
+
+# 继承 workspace 的 lint 配置（见根 Cargo.toml 的 [workspace.lints.cargo]）。
+#
+# 注意：cargo 不允许 `lints.workspace = true` 与本地 `[lints.*]` 覆盖并用
+# （报 "cannot override `workspace.lints` in `lints`"），因此本成员那条
+# 「未使用依赖」的豁免只能写在根 Cargo.toml 的 [workspace.lints.cargo] 里。
+[lints]
+workspace = true

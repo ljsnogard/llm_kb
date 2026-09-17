@@ -13,3 +13,7 @@ description = "Conversion logics between `Rig` types to `abs_llm` types."
 abs_llm = { path = "../../../kb_svc/crates/abs_llm" }
 serde = { version = "1.*", features = ["derive"] }
 serde_json = { version = "1.*" }
+
+# 继承根 Cargo.toml 的 [workspace.lints]（见那里的说明）。
+[lints]
+workspace = true
