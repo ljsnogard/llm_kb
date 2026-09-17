@@ -1,5 +1,9 @@
 use core::{error, ops::Deref};
 
+use abs_async_iter::{
+    TrFlux,
+    x_deps::abs_cancel,
+};
 use abs_cancel::TrMayCancel;
 use abs_str::string_view::TrStringView;
 use anylr::TrEitherOf;
@@ -74,10 +78,11 @@ pub trait TrChatRequest {
 pub trait TrConversation {
     type StrRepr: Deref<Target = str>;
     type Message: TrMessage<TextRepr = Self::StrRepr>;
+    type Messages<'f>: IntoIterator<Item = Self::Message> where Self: 'f;
 
     fn push(&mut self, message: Self::Message);
 
-    fn messages(&self) -> impl IntoIterator<Item = Self::Message>;
+    fn messages(&self) -> Self::Messages<'_>;
 
     fn user(&mut self, text: impl Into<Self::StrRepr>) {
         self.push(Self::Message::text(Role::User, text))
@@ -100,26 +105,17 @@ pub trait TrConversation {
 /// 极小的 async pull interface：
 /// Provider 内部当然可以使用 Tokio、async-std、smol、自己的 executor，
 /// 但这些实现细节不会出现在这个 API 中。
-pub trait TrResponseStream {
+pub trait TrResponseStream
+where
+    Self: TrFlux<Result<
+        LlmRespEvent<Self::TextDelta, Self::ToolCall, Self::Usage>,
+        Self::Err,
+    >>,
+{
     type TextDelta: TrTextDelta;
     type ToolCall: TrToolCall;
     type Usage: TrUsage;
-
-    type Output: TrEitherOf<
-            Lt = Option<LlmRespEvent<Self::TextDelta, Self::ToolCall, Self::Usage>>,
-            Rt = Self::Err,
-        >;
     type Err: error::Error;
-
-    /// 获取下一个响应事件。
-    ///
-    /// 返回 None 表示流已经正常结束。
-    ///
-    /// 这个设计还有一个重要性质：调用者可以在任意一次 `next().await`
-    /// 后停止读取并直接丢弃 stream，从而自然终止后续处理。
-    fn next<'a>(
-        &'a mut self,
-    ) -> impl TrMayCancel<'a, MayCancelOutput = Result<Self::Output, Self::Err>>;
 }
 
 // ============================================================================

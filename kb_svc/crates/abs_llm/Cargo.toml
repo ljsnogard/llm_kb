@@ -8,7 +8,7 @@ license = "MIT/Apache-2.0"
 readme = "README.md"
 
 [dependencies]
-abs_cancel = { workspace = true }
+abs_async_iter = { workspace = true }
 abs_str = { workspace = true }
 anylr = { workspace = true }
 mm_ptr = { workspace = true }

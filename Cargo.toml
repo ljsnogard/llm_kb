@@ -18,8 +18,9 @@ authors = ["lino <lino_snsalias@outlook.com>"]
 # 只为单个 crate 服务的依赖写在各自的 Cargo.toml 里（例如 salvo 只属于 kb_svc_salvo）。
 [workspace.dependencies]
 # ── 知识库自身的抽象层与基础设施 ──────────────────────────────────────
+abs_async_iter = { git = "https://gitee.com/lino_snsalias/abs_async_iter.git" }
 abs_art-bridge = { version = "0.2.2" }
-abs_cancel = { git = "https://gitee.com/lino_snsalias/abs_cancel-rs.git" }
+abs_cancel = { git = "https://gitee.com/lino_snsalias/abs_cancel-rs.git", branch = "dev/0.2.0" }
 abs_str = { git = "https://gitee.com/lino_snsalias/abs_str-rs.git" }
 anylr = { git = "https://gitee.com/lino_snsalias/anylr.rs.git", branch = "dev/0.2.0" }
 buffex = { git = "https://gitee.com/lino_snsalias/buffex.git", branch = "dev/0.3.0" }

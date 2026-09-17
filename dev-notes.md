@@ -42,7 +42,19 @@ TCP 上也能访问 `/ws/plugin`。详见 `kb_svc_salvo::launch` 与 `kb_svc_sal
 
 这一组决策决定了下一阶段的实现方向，实施前已经确认，逐条记录如下。
 
-### 2.1 不在 `abs_kb_svc` 里抽象插件协议
+> **⚠️ §2.1 已被取代（2026-09-17）**：团队已决定把进程间通信由 socket/HTTP 改为共享内存方向的 IPC，
+> 并要求 `abs_kb_svc` 承担"所有 IPC 语义所需的数据类型与信道抽象，以及一个运行时无关的异步 RPC 业务接口"。
+> 因此"`abs_kb_svc` 保持不动、插件协议留在 `kb_svc_salvo`"不再成立；`kb_svc_salvo` 本身也在废弃之列。
+>
+> 后续演进（同日）：共享内存方案首选候选 iceoryx2 经实测后被**放弃**（它要求业务类型改写为定长
+> POD 或加一层镜像类型转换），改为研究 `servo/ipc-channel`。相关文档：
+> - 选型与决策：[`dev-notes/abs_kb_svc-20260917-1254.md`](dev-notes/abs_kb_svc-20260917-1254.md)（**以此文为准**）
+> - iceoryx2 可行性研究（已转为背景资料）：[`dev-notes/kb_svc_iceoryx2-20260917-1203.md`](dev-notes/kb_svc_iceoryx2-20260917-1203.md)
+>
+> `abs_kb_svc` 的定位与接口形状见其 [`README.md`](kb_svc/crates/abs_kb_svc/README.md)。
+> §2.2 / §2.5 关于"rig 数据在哪一侧翻译"的讨论仍有效，但受新方案影响需要重新确认。
+
+### 2.1 不在 `abs_kb_svc` 里抽象插件协议（已被取代，见上方说明）
 
 插件与本次试验的通信协议**先定义在 `kb_svc_salvo` 内部**，不放进抽象层 `abs_kb_svc`。
 等协议在真实使用中稳定下来之后，再考虑上提为抽象。
