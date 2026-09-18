@@ -945,3 +945,40 @@ lib/src/widgets/common/dsw_list_row.dart             两级列表共用的行骨
   接上之后，侧边栏的「+」与删除才名副其实；
 - 界面里还没有"切换连接方式"的入口之外的连接管理（例如记住上次连的那条）；
 - 会话正文：`GetSession` 还没接，中间对话区仍然用本地 `AppController` 的数据。
+
+---
+
+## 14. 修一个对比度问题：气泡提示在浅色主题下看不清（2026-09-18 15:10）
+
+**现象**（用户报告）：鼠标停在侧边栏那两个按钮（连接状态条 / 刷新工作区）上时，
+提示条的文字在深色模式是亮色、浅色模式是暗色——**但底色一直是深灰**，
+于是浅色模式下变成"深底深字"，几乎看不见。
+
+**根因**：`app_theme.dart` 的 `tooltipTheme` 把文字设成了 `c.labelPrimary`。
+`labelPrimary` 是**跟着主题翻转**的别名（浅色 n1000 近黑 / 深色 n50 近白），
+而 `tooltipBg` 在两种主题下都是深色（浅色 n850 / 深色 n750，见 `DswColors`）。
+两者一个翻转、一个不翻转，浅色主题下就撞了。
+
+**修法**：文字固定用**静态**近白色 `DswStaticNeutralBluish.n00`。
+这不是随手挑的——DSH 上游就是这么配的（`packages/client/ui-primitives/src/Tooltip.module.css`）：
+
+```css
+background: var(--dsw-alias-tooltip-bg);          /* 两种主题都是深色 */
+color: var(--dsw-static-neutral-bluish-00);       /* 固定近白 */
+```
+
+因为改的是**全局** `tooltipTheme`，侧边栏、文件面板、设置对话框里的所有 `Tooltip`
+一并修好，不需要逐个改。
+
+**回归测试**（`test/tooltip_theme_test.dart`）：不钉色号，钉**对比关系**——
+在两种主题下用 `TooltipTheme.of(context)` 取真正生效的配置，要求
+文字亮度 > 0.5、底色亮度 < 0.2、差值 > 0.4。
+
+> 写这条测试时踩了一个坑，值得记下来：第一版**在两种主题下都通过**，包括故意改回
+> `labelPrimary` 的那次。原因是 `MaterialApp` 用 `AnimatedTheme` 在主题之间做过渡，
+> 循环到第二次时颜色还在动画中途，读到的其实是上一轮（深色）的值——于是永远"对比良好"。
+> 加上 `await tester.pumpAndSettle()` 之后，改回旧配色会稳定地报
+> `Brightness.light：提示文字应当够亮（实际亮度 0.0056）`。**"测试通过"要先确认它
+> 抓得住 bug**，否则只是装饰。
+
+**验证**：`flutter analyze` 无 issue；`flutter test` **37 项全绿**（新增这 1 项）。

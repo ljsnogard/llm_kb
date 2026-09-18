@@ -123,7 +123,14 @@ ThemeData buildDswTheme(Brightness brightness) {
         color: c.tooltipBg,
         borderRadius: BorderRadius.circular(8),
       ),
-      textStyle: DswTypography.caption.copyWith(color: c.labelPrimary),
+      // 气泡提示的文字**固定用近白色**，不跟主题翻转：底色 `tooltip-bg` 在两种
+      // 主题下都是深色（浅色 `n850` / 深色 `n750`，见 `DswColors`），所以文字
+      // 一旦用 `labelPrimary`，浅色主题就变成"深底深字"，看不清。
+      // DSH 上游也是这么写的：`background: var(--dsw-alias-tooltip-bg); color:
+      // var(--dsw-static-neutral-bluish-00)`（`ui-primitives/Tooltip.module.css`）。
+      textStyle: DswTypography.caption.copyWith(
+        color: DswStaticNeutralBluish.n00,
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
     ),
     scrollbarTheme: ScrollbarThemeData(
