@@ -70,3 +70,20 @@ dev 依赖 `flutter_test`、`integration_test`、`flutter_lints`。
 
 第 1–3 步都需要沙箱之外的权限，因此**这次调查没有产生任何仓库改动**，
 也没有执行 `flutter pub get`（`.dart_tool/` 与 `pubspec.lock` 都保持原样）。
+
+---
+
+## 5. 后记（2026-09-18）：本条结论的前半部分已过时
+
+第 4 节建议的补齐在当天稍晚已经完成：Flutter SDK 现位于
+`/root/develop/flutter`（`flutter` / `dart` 都在），Linux 桌面构建链
+（`clang` / `cmake` / `ninja` / `pkg-config` / GTK3）与 `xvfb-run` 也都在位。
+所以本文件 §3 表格里"现在不能"的那些行，前半句不再成立。
+
+仍然成立的只有一条**沙箱**限制：当前会话沙箱把 `/root` 挂成只读，
+`flutter` 一启动就会报 `engine.stamp.tmp.*` / `engine.realm` 的
+`Read-only file system`（SDK 自己的 cache 写不进去）。因此 Dart/Flutter 侧的
+验证"能跑，但要放宽沙箱"——`external/frb-spike/run-spike*.sh` 就是这么跑的。
+
+现状的完整核查与它对客户端连接改造的影响，见
+[`kb_admin_desktop-20260918-1034.md`](kb_admin_desktop-20260918-1034.md) §1.6。

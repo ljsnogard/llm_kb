@@ -10,6 +10,8 @@ members = [
 
     # 插件与配套进程
     "kb_plugins/crates/kb_core_rproxy",
+    # 启动 `kb_core` 子进程并等它公布 IPC 端点文件名；rproxy 与客户端共用。
+    "kb_plugins/crates/kb_core_starter",
     "kb_plugins/crates/kb_rig_llm_v1_adapt",
     "kb_plugins/crates/kb_rig_llm_v1_agent",
 ]

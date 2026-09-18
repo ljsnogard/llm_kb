@@ -1,0 +1,39 @@
+[package]
+edition = "2024"
+name = "kb_core_starter"
+version = "0.1.0"
+
+description = "Start a `kb_core` process and asynchronously wait for the IPC endpoint it announces."
+
+# 只属于本 crate 的依赖直接写在这里；只有跨成员共用的依赖才放 workspace。
+[dependencies]
+# 「可取消 future」的抽象与宏：本 crate 唯一的公开异步入口用它展开成
+# 「不可取消 / 可取消」两条路径（见 `AGENTS.md` 第 4 条）。
+abs_cancel = { workspace = true }
+gen_mcf2 = { git = "https://gitee.com/lino_snsalias/gen_mcf2.rs.git" }
+
+# 完成量：把「阻塞读一行」收敛到专职线程上，future 里只轮询它。
+futures-channel = "0.3"
+
+log = { workspace = true }
+
+# 解析 `kb_core` 在 stdout 上打的那一行 JSON 通知。
+serde_json = { version = "1.*" }
+
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# `abs_cancel` / `futures-channel` 同时出现在这里，是因为集成测试是独立的 crate：
+# 它只能看到本 crate 的公开 API 与 `[dev-dependencies]`，看不到 `[dependencies]`。
+abs_cancel = { workspace = true }
+futures-channel = "0.3"
+
+# 驱动「与运行时无关」的 future：最轻的 block_on 就够了，不必引入 tokio / compio。
+futures-lite = { workspace = true }
+
+# 集成测试用真实临时目录，避免污染用户目录，也避免测试之间互相干扰。
+tempfile = { version = "3.*" }
+
+# 继承根 Cargo.toml 的 [workspace.lints]（见那里的说明）。
+[lints]
+workspace = true

@@ -20,7 +20,7 @@
 //!
 //! | 层面 | 谁管 | 在本 crate 里的位置 |
 //! | :--- | :--- | :--- |
-//! | **系统层**（找得到、连得上） | 传输实现 | [`launch_`]：用 `--handshake-prompt=stdio` 启动 `kb_core`，读它公布的一行通知拿到 IPC 端点文件名 |
+//! | **系统层**（找得到、连得上） | 传输实现 | [`kb_core_starter`]：用 `--handshake-prompt=stdio` 启动 `kb_core`，读它公布的一行通知拿到 IPC 端点文件名 |
 //! | **应用层**（谈得成） | `abs_kb_svc` 的协议（`Request::Hello`） | `main.rs`：**等真的有远程客户端连上来**才发起；启动时不打扰 `kb_core` |
 //!
 //! 分工的完整说明见 `abs_kb_svc::v1::desktop::handshake_` 的模块文档。
@@ -37,7 +37,6 @@
 //! 并发/多客户端要等这一版跑通、并且 `kb_core` 那侧能并发服务连接之后再说。
 
 mod frame_;
-mod launch_;
 mod ring_;
 
 use std::path::PathBuf;
@@ -47,9 +46,8 @@ use abs_kb_svc::v1::desktop::{
     ClientInfo, PROTOCOL_VERSION, Reply, ReplyEnvelope, RpcError, TrHandshake,
 };
 use compio::io::AsyncRead;
+use kb_core_starter::{LaunchSpec, start};
 use kb_svc_servo_ipc::Client;
-
-use crate::launch_::{LaunchSpec, Launched};
 
 /// 缺省监听地址。
 ///
@@ -142,7 +140,7 @@ fn parse_options_(argv: impl IntoIterator<Item = String>) -> Result<Options, Usa
 
     let runtime_dir = runtime_dir.unwrap_or_else(default_runtime_dir_);
     let storage_dir = storage_dir.unwrap_or_else(|| runtime_dir.join("storage"));
-    let kb_core = match kb_core.or_else(launch_::default_kb_core_path) {
+    let kb_core = match kb_core.or_else(kb_core_starter::default_kb_core_path) {
         Some(path) => path,
         None => {
             return Err(UsageError_(
@@ -216,14 +214,17 @@ fn warn_about_security(options: &Options) {
 /// 网关主体：启动 `kb_core`、连上它、然后一次服务一个远程客户端。
 async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     // ── 系统层握手：启动 kb_core，拿到它的 IPC 端点文件名 ──────────────
+    //
+    // 这一步是**异步**的，而且与运行时无关：`kb_core_starter` 把"等 stdout 上
+    // 那一行"收敛在自己的通知线程上，执行器线程不参与等待。网关现在不等超时
+    // （等多久由调用方决定，将来要用 `--launch-timeout` 再说）；要加的话就是
+    // `.may_cancel_with(超时令牌)`。
     let spec = LaunchSpec {
         kb_core: options.kb_core_.clone(),
         runtime_dir: options.runtime_dir_.clone(),
         storage_dir: options.storage_dir_.clone(),
     };
-    let launched: Launched = compio::runtime::spawn_blocking(move || launch_::launch(&spec))
-        .await
-        .map_err(|error| format!("启动任务异常结束: {error}"))??;
+    let launched = start(&spec).await?;
 
     // ── 连上 kb_core（阻塞式连接，含重试）────────────────────────────
     let runtime_dir = options.runtime_dir_.clone();
