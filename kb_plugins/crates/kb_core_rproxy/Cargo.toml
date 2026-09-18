@@ -2,6 +2,7 @@
 edition = "2024"
 name = "kb_core_rproxy"
 version = "0.1.0"
+authors = ["lino <lino_snsalias@outlook.com>"]
 
 description = "LAN application-layer gateway in front of kb_core (no auth yet)."
 
@@ -12,8 +13,8 @@ abs_kb_svc = { path = "../../../kb_svc/crates/abs_kb_svc" }
 
 # 系统层握手：启动 kb_core 子进程并等它公布 IPC 端点文件名。
 # 这段逻辑原本长在本 crate 的 `src/launch_.rs` 里，现在独立成可复用的 crate
-# （桌面客户端也要用它起本机的 kb_core）。
-kb_core_starter = { path = "../kb_core_starter" }
+# （桌面客户端也要用它起本机的 kb_core）。它属于服务侧，因此放在 `kb_svc/crates/`。
+kb_core_starter = { path = "../../../kb_svc/crates/kb_core_starter" }
 
 # 上游客户端：本网关用它的 `send_envelope` 原样转发信封。
 kb_svc_servo_ipc = { path = "../../../kb_svc/crates/kb_svc_servo_ipc" }
@@ -42,7 +43,3 @@ thiserror = { workspace = true }
 [[bin]]
 name = "kb-core-rproxy"
 path = "src/main.rs"
-
-# 继承根 Cargo.toml 的 [workspace.lints]（见那里的说明）。
-[lints]
-workspace = true

@@ -2,6 +2,7 @@
 edition = "2024"
 name = "kb_rig_llm_v1_agent"
 version = "0.1.0"
+authors = ["lino <lino_snsalias@outlook.com>"]
 
 description = "kb LLM plugins to interact with LLM services."
 
@@ -21,7 +22,3 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 toml = "0.9"
-
-# 继承根 Cargo.toml 的 [workspace.lints]（见那里的说明）。
-[lints]
-workspace = true

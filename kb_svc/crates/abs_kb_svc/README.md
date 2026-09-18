@@ -119,8 +119,16 @@
 | `TrSessionService` | 会话的增删查改（4 个方法） |
 | `TrKbService` | 上面几个的组合 trait（服务端实现与客户端代理都实现它） |
 
-**两个层面的握手**：应用层握手（本节这些类型 + [`v1::desktop::handshake_`](src/v1/desktop/handshake_.rs)）
-与**系统层握手**（"怎么找到端点"，由传输实现决定，不属于本 crate）。
+**两个层面的握手，消息都在本 crate 里**（[`v1::desktop::handshake_`](src/v1/desktop/handshake_.rs)）：
+
+| 层面 | 解决什么 | 消息 | 机制（谁定） |
+| :--- | :--- | :--- | :--- |
+| **系统层** | 找得到、连得上 | `IpcReadyNotice`：`kb_core` 用 `--handshake-prompt=stdio` 往 stdout 打的一行 JSON，公布 IPC 端点名字文件 | 传输实现：挑哪种内核端点、端点放哪、失败怎么重试 |
+| **应用层** | 谈得成 | `Request::Hello(ClientInfo)` → `Reply::Hello(ServerInfo)` → `Event::Ready(ServerState)` | 协议 v1，传输无关 |
+
+把系统层的**消息**也收进来，是因为它是两个进程之间的约定：`kb_core` 与它的启动方
+（`kb_core_starter`）必须共用同一份字段定义，否则改个字段名只能靠跑起来才发现。
+但**机制**仍留在实现 crate 里——换一种传输可以完全不经过这条 stdio 通知。
 两者各自解决什么、为什么分开，写在 `handshake_` 的模块文档里。
 
 **形状上的要点**（细节见该模块的模块文档）：

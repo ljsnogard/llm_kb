@@ -2,19 +2,12 @@
 edition = "2024"
 name = "abs_kb_svc"
 version = "0.1.0"
+authors = ["lino <lino_snsalias@outlook.com>"]
 
 description = "ABStraction of KnowledgeBase SerViCe."
 
 [dependencies]
-# 可取消异步的抽象：按域 RPC trait 的每个方法都返回一个受
-# `TrMayCancel` 约束的 future（见 `src/v1/desktop/rpc_.rs`），因此需要直接依赖它。
-# （它本来就已经通过 `abs_async_iter` 间接在依赖链上，这里只是让它可命名。）
-abs_cancel = { workspace = true }
-abs_async_iter = { workspace = true }
 abs_llm = { path = "../abs_llm" }
-abs_str = { workspace = true }
-buffex = { workspace = true }
-mm_ptr = { workspace = true }
 
 # 协议数据类型的跨进程表示。
 # 与 `abs_llm` 的临时决策（dev-notes/llm_kb-20260917-1655.md §1.4）一致：只给纯数据 enum/struct 派生，
@@ -50,11 +43,3 @@ futures-lite = { workspace = true }
 # ipc-channel 0.23 用 postcard，见 dev-notes/abs_kb_svc-20260917-1254.md §3。
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 serde_json = { version = "1.*" }
-
-# 继承 workspace 的 lint 配置（见根 Cargo.toml 的 [workspace.lints.cargo]）。
-#
-# 注意：cargo 不允许 `lints.workspace = true` 与本地 `[lints.*]` 覆盖并用
-# （报 "cannot override `workspace.lints` in `lints`"），因此本成员那条
-# 「未使用依赖」的豁免只能写在根 Cargo.toml 的 [workspace.lints.cargo] 里。
-[lints]
-workspace = true

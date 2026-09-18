@@ -2,6 +2,7 @@
 edition = "2024"
 name = "kb_core_starter"
 version = "0.1.0"
+authors = ["lino <lino_snsalias@outlook.com>"]
 
 description = "Start a `kb_core` process and asynchronously wait for the IPC endpoint it announces."
 
@@ -10,7 +11,12 @@ description = "Start a `kb_core` process and asynchronously wait for the IPC end
 # 「可取消 future」的抽象与宏：本 crate 唯一的公开异步入口用它展开成
 # 「不可取消 / 可取消」两条路径（见 `AGENTS.md` 第 4 条）。
 abs_cancel = { workspace = true }
-gen_mcf2 = { git = "https://gitee.com/lino_snsalias/gen_mcf2.rs.git" }
+gen_mcf2 = { workspace = true }
+
+# 系统层握手的**消息类型**：`IpcReadyNotice` 是协议 v1 的一部分，定义在
+# `abs_kb_svc::v1::desktop::handshake_`。发的一方（`kb_core`）与收的一方
+# （本 crate）共用它，字段名改动会编译不过，而不是跑起来才发现。
+abs_kb_svc = { path = "../abs_kb_svc" }
 
 # 完成量：把「阻塞读一行」收敛到专职线程上，future 里只轮询它。
 futures-channel = "0.3"
@@ -33,7 +39,3 @@ futures-lite = { workspace = true }
 
 # 集成测试用真实临时目录，避免污染用户目录，也避免测试之间互相干扰。
 tempfile = { version = "3.*" }
-
-# 继承根 Cargo.toml 的 [workspace.lints]（见那里的说明）。
-[lints]
-workspace = true

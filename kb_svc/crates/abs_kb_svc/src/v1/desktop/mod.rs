@@ -21,12 +21,12 @@
 //!
 //! 本目录按**数据概念**拆文件，而不是按"类型/函数"分层；
 //! 只有当若干类型之间存在**内部共享逻辑或私有访问**时才放在同一个文件里
-//! （目前只有 [`ids`] 因为共用一个私有宏而聚合）。
+//! （目前只有 `ids_` 因为共用一个私有宏而聚合）。
 //!
 //! | 文件 | 内容 |
 //! | :--- | :--- |
 //! | `ids_` | 标识类型与它们的生成规则 |
-//! | `handshake_` | 协议版本、双方身份、服务端整体状态 |
+//! | `handshake_` | 两个层面的握手：协议版本、双方身份、服务端整体状态（应用层）+ 就绪通知（系统层） |
 //! | `content_` | 一条消息及其组成部分（增量、工具调用、用量、提示） |
 //! | `service_` | LLM 服务配置与 API key 的更新语义 |
 //! | `workspace_` | 工作区与会话（kb_core 管理、多端同步） |
@@ -122,7 +122,9 @@ pub use event_::{
     UsageEvent,
 };
 pub use fs_::{DirEntry, DirEntryKind, DirectoryListing};
-pub use handshake_::{ClientInfo, PROTOCOL_VERSION, ServerInfo, ServerState};
+pub use handshake_::{
+    ClientInfo, HandshakeNoticeKind, IpcReadyNotice, PROTOCOL_VERSION, ServerInfo, ServerState,
+};
 pub use ids_::{LocalId, RequestId, ServiceId, SessionId, TurnId, WorkspaceId};
 pub use reply_::Reply;
 pub use request_::{

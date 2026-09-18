@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use abs_str::string_view::TrStringView;
 use abs_buff::TrBuffRead;
-use buffex::x_deps::abs_buff;
 
 pub trait TrMediaSource {
     type MimeStr: TrStringView<str>;

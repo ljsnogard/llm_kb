@@ -11,8 +11,9 @@
 
 1. **启动**一个 `kb_core` 子进程（`--handshake-prompt=stdio`），读它公布的那一行
    通知，**记录 IPC 端点文件名**——这是**系统层握手**。这一段由
-   [`kb_core_starter`](../kb_core_starter/) 提供（它原来就长在本 crate 里，
-   现在独立成可复用的 crate：桌面客户端要起本机 `kb_core` 时用的是同一段代码）；
+   [`kb_core_starter`](../../../kb_svc/crates/kb_core_starter/) 提供
+   （它原来长在本 crate 里，现在作为服务侧基础设施独立成可复用的 crate：
+   桌面客户端要起本机 `kb_core` 时用的是同一段代码）；
 2. 连上 `kb_core`（`kb_svc_servo_ipc::Client`）；
 3. 监听 TCP，把远程客户端发来的 `RequestEnvelope` **原样**转发过去，把
    `ReplyEnvelope` 原样送回。它**不解释任何业务**——不懂工作区，也不懂会话。
@@ -52,9 +53,9 @@ cargo run -p kb_core_rproxy --example probe -- 127.0.0.1:8788
 
 ## 两层握手，各管一段
 
-| 层面 | 解决什么 | 在本 crate 里的位置 | 格式由谁定 |
+| 层面 | 解决什么 | 在本 crate 里的位置 | 消息由谁定 |
 | :--- | :--- | :--- | :--- |
-| **系统层** | 找得到、连得上 | `kb_core_starter`：启动 `kb_core`，读它 stdout 上的那一行 JSON（异步、可取消） | `kb_core` / `kb_core_starter`（**不属于协议**） |
+| **系统层** | 找得到、连得上 | `kb_core_starter`：启动 `kb_core`，读它 stdout 上的那一行通知（异步、可取消） | **`abs_kb_svc` 的 `IpcReadyNotice`（协议 v1）**；怎么把消息送到由传输实现决定 |
 | **应用层** | 谈得成 | `main.rs`：**等真有远程客户端连上来**才发起 `Request::Hello` | `abs_kb_svc` 的协议 |
 
 - stdio 通知**默认关闭**：只有 `--handshake-prompt=stdio` 时 `kb_core` 才会往

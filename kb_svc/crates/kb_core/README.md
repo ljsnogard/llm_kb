@@ -65,12 +65,19 @@ kb-core --handshake-prompt stdio --runtime-dir /tmp/kb-demo/run --storage-dir /t
 {"event":"ipc_ready","ipc_name_file":"…/kb-20260917-….ipc","protocol_version":1,"pid":1234}
 ```
 
+这一行的类型是
+[`abs_kb_svc::v1::desktop::IpcReadyNotice`](../abs_kb_svc/src/v1/desktop/handshake_.rs)
+——它是**协议 v1 的一部分**，不是 `kb_core` 私定的格式。发的一方（本进程的
+[`crate::serve_`]）与收的一方（`kb_core_starter`）共用同一份字段定义，
+所以改字段名会编译不过，而不是"跑起来才发现对端解不开"。
+
 **默认是 `none`**（stdout 一个字都不多），只有显式要求时才打。
 
-> 这是**系统层握手**——只解决"父进程知道连哪里"。协议里还有一个**应用层握手**
+> 这是**系统层握手**——只解决"父进程知道连哪里"。协议里还有**应用层握手**
 > （`Request::Hello` → `Reply::Hello` → `Event::Ready`），它解决"谈得成"。
-> 两层各自的职责见 `kb_svc/crates/abs_kb_svc/src/v1/desktop/handshake_.rs`
-> 的模块文档。
+> 两个层面的消息都在 `abs_kb_svc` 里；区别只在消息之外的机制归谁
+> （挑哪种内核端点、端点放哪、失败怎么重试）。完整说明见
+> `kb_svc/crates/abs_kb_svc/src/v1/desktop/handshake_.rs` 的模块文档。
 
 不想污染用户目录时，把两个目录都指到 `/tmp`：
 

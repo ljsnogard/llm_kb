@@ -21,8 +21,9 @@
   - [`kb_admin_desktop-20260917-1700.md`](kb_admin_desktop-20260917-1700.md)：本机 GUI 测试能力
     （**该文"本机没有 Flutter SDK"的结论已经过时**，见 §1.6）
 
-> **2026-09-18 11:15 更新**：§9 记录了团队对 §6 中若干项的**拍板结果**，以及
-> `kb_core_starter` **已经提取落地**的事实。§2.3 的配置示例已按拍板结果改成 TOML；
+> **2026-09-18 11:50 更新**：§9 记录了团队对 §6 中若干项的**拍板结果**、`kb_core_starter`
+> **已经提取落地**的事实，以及一条**对 1749 §7.1 的修订**——`kb_core` 的 stdio 就绪通知
+> 纳入 `abs_kb_svc`，两个层面的握手都算公开协议。§2.3 的配置示例已按拍板结果改成 TOML；
 > §1–§8 的调研内容保持原样（它们仍然解释"为什么最终是这些形状"）。
 
 ---
@@ -462,7 +463,8 @@ kb_plugins/crates/kb_core_rproxy_client/     ← 新 crate（lib）
 1. ~~**客户端配置文件的格式与位置**（§2.3 的 JSON 提案、平台目录规则、`kind` 的三个取值、
    `default` + 顺序回退的语义、配置只读还是可被界面写回）~~ → **已拍板：TOML；
    启动时读或创建；"只读"这条被"首次运行要能生成"取代**；
-2. **新 crate 的名字与放置**：~~`kb_core_starter`（`kb_plugins/crates/`）~~ → **已落地**；
+2. **新 crate 的名字与放置**：~~`kb_core_starter`（`kb_plugins/crates/`）~~ →
+   **已落地在 `kb_svc/crates/`**（服务侧，不是插件，见 §9.2）；
    剩下的：TCP 客户端 crate 的名字（`kb_core_rproxy_client`？）与它和帧编解码的关系
    （一个 crate 两个模块 vs 两个 crate）；
 3. **帧编解码的共享方式**：把 rproxy 的 `frame_.rs` 拆成纯编解码 + IO 包装，前者进共享 crate；
@@ -572,6 +574,20 @@ stdout 上**正好一行**，与 `launch_` 的解析逻辑对得上。
 | 2 | **`kb_admin_desktop` 里界面逻辑以外一律用 Rust 实现；有条件时独立成可复用 crate** | 配置解析、连接管理、TCP 客户端、启动 `kb_core` 全部落在 Rust 侧；Dart 只做界面与状态。本次的 `kb_core_starter` 就是这条的第一个产物 |
 | 3 | **启动时读或创建配置文件；若为新建，要提供界面让用户选择或填写如何连 `kb_core`**（重要技术决策） | 客户端多出"首次运行"这条状态机：文件不存在 → 引导界面 → 按用户输入生成文件。§3.1(c) 的"default + 顺序回退"仍然成立，但要加一条"首次生成" |
 | 4 | **等 stdio 通知的取消/超时逻辑放进 `kb_core_starter`，做成与运行时无关的异步库，等多久由调用者决定** | 本次已落地（§9.2）。`kb_core_starter` **不自带定时器**：它把等待做成可取消 future，由调用方用 `abs_cancel` 令牌表达"多久之后不等了" |
+| 5 | **`kb_core` 的 stdio 就绪通知纳入 `abs_kb_svc`；两个层面的握手都算公开协议** | 新增 `abs_kb_svc::v1::desktop::{IpcReadyNotice, HandshakeNoticeKind}`；`kb_core` 用它序列化、`kb_core_starter` 用它解析。**修订** 1749 §7.1 的"系统层格式不进协议" |
+
+第 5 条的来龙去脉值得记一笔，因为它**推翻了 1749 §7.1 已经拍过的决定**：
+
+- 1749 §7.1 的原话是"系统层握手的消息格式**不进 `abs_kb_svc`**"，
+  `abs_kb_svc/README.md` 与 `handshake_.rs` 的模块文档也都是这个口径；
+- 但那条通知事实上是**两个进程之间的约定**：`kb_core::serve_` 用
+  `serde_json::json!` 现拼，`kb_core_starter` 按字符串键现抠，**没有任何一处
+  能挡住单边改名**——真正的失败模式是"跑起来发现启动不了"；
+- 修订后的分界是**"消息在协议里，机制在传输实现里"**：选哪种内核端点、端点放哪、
+  失败怎么重试仍由传输实现决定；`kb_svc_servo_ipc` 那条"扫运行时目录"的路径
+  压根不经过这条通知，所以"换传输不必改协议"这个初衷没有被牺牲。
+
+1749 §7.1 已就地加了修订标注（保留了原文与推翻理由）。
 
 决策 3 还留了三个实现前要定的细节（都不影响本报告的结论）：
 
@@ -586,12 +602,20 @@ stdout 上**正好一行**，与 `launch_` 的解析逻辑对得上。
 
 | 位置 | 内容 |
 | :--- | :--- |
-| `kb_plugins/crates/kb_core_starter/` | 新 crate（lib）。公开面：`LaunchSpec` / `Launched` / `LaunchError` / `start()` / `default_kb_core_path()` / `kb_core_beside()`；私有模块 `error_` / `launch_` / `notice_` |
+| `kb_svc/crates/kb_core_starter/` | 新 crate（lib）。公开面：`LaunchSpec` / `Launched` / `LaunchError` / `start()` / `default_kb_core_path()` / `kb_core_beside()`；私有模块 `error_` / `launch_` / `notice_` |
 | `src/launch_.rs` | `#[gen_mcf2::gen_may_cancel_future(Start, pub)]` 展开出 `StartAsync`：`.await` 为不可取消路径，`.may_cancel_with(token).await` 为可取消路径 |
-| `src/notice_.rs` | 那一行 JSON 通知的解析（只取 `ipc_name_file`）；纯函数，可单测 |
+| `src/notice_.rs` | 解析协议类型 `abs_kb_svc::v1::desktop::IpcReadyNotice`（只取 `ipc_name_file`）；纯函数，可单测 |
+| `kb_svc/crates/abs_kb_svc/src/v1/desktop/handshake_.rs` | 新增系统层握手消息：`IpcReadyNotice` + `HandshakeNoticeKind`（`event` 线上取值 `"ipc_ready"`），含 JSON 线格式与 postcard 往返测试 |
+| `kb_svc/crates/kb_core/src/serve_.rs` | 打通知改成用 `IpcReadyNotice` 序列化（不再是 `serde_json::json!` 现拼） |
 | `tests/launch.rs` | 集成测试：假 `kb_core` 脚本覆盖 正常 / 提前退出 / 坏通知 / 可执行文件不可用 / 已取消不起进程 / **等待中取消并结束子进程** / `kb_core_beside` |
 | `kb_plugins/crates/kb_core_rproxy/` | 删 `src/launch_.rs`（-163 行）；`main.rs` 改用 `kb_core_starter::start(&spec).await`；`Cargo.toml` 去掉 `serde_json`（只有旧 `launch_` 用它），保留 `thiserror`（`ring_` 在用） |
-| 根 `Cargo.toml` | 把 `kb_plugins/crates/kb_core_starter` 加进成员 |
+| 根 `Cargo.toml` | 把 `kb_svc/crates/kb_core_starter` 加进成员（**服务侧**那一组，不是插件组） |
+
+> **放置修正（2026-09-18 11:40）**：§3.2 与 §6 第 2 条原建议放在
+> `kb_plugins/crates/`（沿用 1749 §7.5"启动器算插件"的说法），实际落地改为
+> **`kb_svc/crates/kb_core_starter`**：它是 `kb_core` 的配套启动逻辑、属于**服务侧基础设施**，
+> 而 `kb_core_rproxy` 那种"对外提供服务的网关"才算插件。§3.2 的其余建议（依赖面最小、
+> 不管 IPC 连接、超时交给调用方）都照原样落地。
 
 关键形状（对应决策 4）：
 
@@ -614,6 +638,8 @@ start(&spec) ──► StartAsync（与运行时无关的 future）
 ### 9.3 验证
 
 - `cargo test -p kb_core_starter`：2 单元 + 7 集成 + 3 文档测试**全绿**；
+- `cargo test -p abs_kb_svc`：新增的系统层通知类型带 JSON 线格式测试与 postcard
+  往返测试（后者守的是本模块"不用内部标签 / 不用 `skip_serializing_if`"那两条约定）；
 - 反脆弱：集成测试连跑 60 次、以及 4 路并发 × 20 次，**0 失败**。
   过程中确实抓到一个 flake：并行测试里"某个线程正在写脚本"与"另一个线程 fork"重叠时，
   exec 会拿到 `ETXTBSY`（Text file busy）——已用一把 `SPAWN_LOCK_` 把"写脚本 + 起进程"

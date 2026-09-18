@@ -5,27 +5,28 @@
 //!
 //! ```text
 //! 调用方 ──Command::new("kb-core") --handshake-prompt=stdio──► kb_core（子进程）
-//!        ◄──── stdout 上的一行 JSON（含 ipc_name_file）────────┘
+//!        ◄──── stdout 上的一行 IpcReadyNotice（JSON）────────┘
 //! ```
 //!
-//! # 它负责哪一层
+//! # 它实现 `abs_kb_svc` 里的哪一块
 //!
-//! 只负责**系统层握手**里"父进程怎么找到端点"这一半：起进程 + 读那行通知。
-//! **不做**应用层握手（`Request::Hello`）——那是 `abs_kb_svc` 的协议，
-//! 也不是每个父子关系都需要（`kb_core_rproxy` 就等到真有远程客户端时才做）。
-//! 两个层面的分工见
-//! [`abs_kb_svc::v1::desktop::handshake_`](https://docs.rs/abs_kb_svc) 的模块文档。
+//! 只实现**系统层握手**的"发起方"这一半：起进程 + 收 [`IpcReadyNotice`]。
+//! 它**不实现**应用层握手（[`TrHandshake`] / `Request::Hello`）——那要等真正
+//! 连上之后由 IPC 或 TCP 客户端去做，而且不是每个父子关系都需要
+//! （`kb_core_rproxy` 就等到真有远程客户端时才做）。
 //!
-//! 通知格式（`kb_core --handshake-prompt stdio` 往 stdout 打的一行 JSON）**由
-//! `kb_core` 自己决定，不属于 `abs_kb_svc` 的协议**：
+//! 两个层面**都是协议 v1 的公开约定**，只是分工不同：
 //!
-//! ```json
-//! {"event":"ipc_ready","ipc_name_file":"…/kb-20260918-….ipc","protocol_version":1,"pid":1234}
-//! ```
+//! | 层面 | 消息 | 谁实现 |
+//! | :--- | :--- | :--- |
+//! | **系统层**（找得到、连得上） | [`IpcReadyNotice`](abs_kb_svc::v1::desktop::IpcReadyNotice)（`event: "ipc_ready"`） | **本 crate**（收）+ `kb_core`（发） |
+//! | **应用层**（谈得成） | `Request::Hello` → `Reply::Hello` → `Event::Ready` | `kb_svc_servo_ipc::Client` / 将来的 TCP 客户端 |
 //!
-//! 本 crate 只从里面取 [`ipc_name_file`]，其余字段留给需要的人（现在没人需要）。
+//! 因此本 crate 只依赖 [`abs_kb_svc`] 的**消息类型**，不依赖它的 RPC trait，
+//! 也不依赖任何 IPC / 网络实现。完整理由见 crate 根的 `README.md`。
 //!
-//! [`ipc_name_file`]: Launched::name_file
+//! [`IpcReadyNotice`]: abs_kb_svc::v1::desktop::IpcReadyNotice
+//! [`TrHandshake`]: abs_kb_svc::v1::desktop::TrHandshake
 //!
 //! # 异步、可取消、与运行时无关
 //!

@@ -20,10 +20,12 @@
 //!
 //! | 层面 | 谁管 | 在本 crate 里的位置 |
 //! | :--- | :--- | :--- |
-//! | **系统层**（找得到、连得上） | 传输实现 | [`kb_core_starter`]：用 `--handshake-prompt=stdio` 启动 `kb_core`，读它公布的一行通知拿到 IPC 端点文件名 |
+//! | **系统层**（找得到、连得上） | 传输实现 | [`kb_core_starter`]：用 `--handshake-prompt=stdio` 启动 `kb_core`，读它公布的一行 [`IpcReadyNotice`]（`abs_kb_svc` 的协议类型）拿到 IPC 端点文件名 |
 //! | **应用层**（谈得成） | `abs_kb_svc` 的协议（`Request::Hello`） | `main.rs`：**等真的有远程客户端连上来**才发起；启动时不打扰 `kb_core` |
 //!
 //! 分工的完整说明见 `abs_kb_svc::v1::desktop::handshake_` 的模块文档。
+//!
+//! [`IpcReadyNotice`]: abs_kb_svc::v1::desktop::IpcReadyNotice
 //!
 //! ## TCP 帧
 //!

@@ -2,6 +2,7 @@
 edition = "2024"
 name = "kb_core"
 version = "0.1.0"
+authors = ["lino <lino_snsalias@outlook.com>"]
 
 description = "The core process of KnowledgeBase service."
 
@@ -9,7 +10,7 @@ description = "The core process of KnowledgeBase service."
 [dependencies]
 # 可取消 future 的抽象与宏：`src/ipc_.rs` 里的服务端实现用它展开。
 abs_cancel = { workspace = true }
-gen_mcf2 = { git = "https://gitee.com/lino_snsalias/gen_mcf2.rs.git" }
+gen_mcf2 = { workspace = true }
 
 # 协议数据（工作区 / 会话 / 消息）的唯一定义处。存储格式直接复用这些类型，
 # 不在此处镜像第二套结构。
@@ -42,7 +43,3 @@ tempfile = { version = "3.*" }
 [[bin]]
 name = "kb-core"
 path = "src/main.rs"
-
-# 继承根 Cargo.toml 的 [workspace.lints]（见那里的说明）。
-[lints]
-workspace = true

@@ -77,6 +77,8 @@
 
 use abs_cancel::TrMayCancel;
 
+use abs_llm::x_deps::abs_cancel;
+
 use super::error_::ErrorReply;
 use super::handshake_::{ClientInfo, ServerInfo};
 use super::ids_::{SessionId, WorkspaceId};
@@ -262,7 +264,8 @@ pub trait TrSessionService: TrKbEndpoint {
 /// 对应协议里的 `Request::Hello` / `Reply::Hello`。它与"系统层握手"的区别见
 /// [`handshake_`](crate::v1::desktop) 的模块文档：
 ///
-/// - 系统层解决「找得到、连得上」，格式由传输实现决定；
+/// - 系统层解决「找得到、连得上」，消息是 [`IpcReadyNotice`](crate::v1::desktop::IpcReadyNotice)，
+///   但**怎么把消息送到**（挑哪种内核端点、端点放哪、失败怎么重试）由传输实现决定；
 /// - 本 trait 解决「谈得成」，是**可以开始发业务请求**的分界线。
 ///
 /// 因此任何客户端（直连本机 IPC 的、经 `kb_core_rproxy` 从局域网过来的）

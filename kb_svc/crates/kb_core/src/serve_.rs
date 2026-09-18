@@ -21,7 +21,7 @@
 use std::io::Write;
 use std::sync::Arc;
 
-use abs_kb_svc::v1::desktop::PROTOCOL_VERSION;
+use abs_kb_svc::v1::desktop::{HandshakeNoticeKind, IpcReadyNotice, PROTOCOL_VERSION};
 use kb_svc_servo_ipc::Listener;
 use log::{info, warn};
 
@@ -74,14 +74,15 @@ pub async fn run(paths: &Paths, handshake_prompt: HandshakePrompt) -> Result<(),
 
 /// 按 `--handshake-prompt` 的取值，把 **IPC 端点文件名**通知给启动本进程的父进程。
 ///
-/// 这是**系统层握手**的一半：父进程（例如 `kb_core_rproxy`）需要知道"连哪里"，
-/// 而从运行时目录里猜名字有竞态与歧义，所以给它一个显式通道。
-/// 协议层面的应用层握手不在这里——那是 `Request::Hello` 的事。
+/// 这是**系统层握手**的一半：父进程（`kb_core_rproxy` / 桌面客户端，都经
+/// `kb_core_starter`）需要知道"连哪里"，而从运行时目录里猜名字有竞态与歧义，
+/// 所以给它一个显式通道。协议层面的应用层握手不在这里——那是 `Request::Hello` 的事。
 ///
-/// 格式（`stdio` 时往 stdout 打一行 JSON）**由本 crate 决定**，不进 `abs_kb_svc`：
+/// 消息类型是 [`IpcReadyNotice`]（**协议 v1 的一部分**，定义在 `abs_kb_svc`），
+/// 这样"发的一方"和"收的一方"共用一份字段定义，改名会编译不过而不是跑起来才发现：
 ///
 /// ```json
-/// {"event":"ipc_ready","ipc_name_file":"…/kb-20260917-….ipc","protocol_version":1,"pid":1234}
+/// {"event":"ipc_ready","ipc_name_file":"…/kb-20260918-….ipc","protocol_version":1,"pid":1234}
 /// ```
 ///
 /// 只承诺**文件名**：文件内容（当前可连的端点名）要等服务端真正开始 accept
@@ -89,7 +90,8 @@ pub async fn run(paths: &Paths, handshake_prompt: HandshakePrompt) -> Result<(),
 ///
 /// # Errors
 ///
-/// stdout 写不出去（例如管道已关闭）时返回 [`CoreError::BlockingTask`]。
+/// - 通知编码失败（理论上不会）→ [`CoreError::Encode`]；
+/// - stdout 写不出去（例如管道已关闭）→ [`CoreError::BlockingTask`]。
 fn announce_ipc_name_file(
     listener: &Listener,
     handshake_prompt: HandshakePrompt,
@@ -98,15 +100,16 @@ fn announce_ipc_name_file(
         return Ok(());
     }
 
-    let notice = serde_json::json!({
-        "event": "ipc_ready",
-        "ipc_name_file": listener.name_file().display().to_string(),
-        "protocol_version": PROTOCOL_VERSION,
-        "pid": std::process::id(),
-    });
+    let notice = IpcReadyNotice {
+        event: HandshakeNoticeKind::IpcReady,
+        ipc_name_file: listener.name_file().display().to_string(),
+        protocol_version: PROTOCOL_VERSION,
+        pid: std::process::id(),
+    };
+    let line = serde_json::to_string(&notice).map_err(CoreError::Encode)?;
 
     let mut stdout = std::io::stdout();
-    writeln!(stdout, "{notice}").map_err(|error| CoreError::BlockingTask(error.to_string()))?;
+    writeln!(stdout, "{line}").map_err(|error| CoreError::BlockingTask(error.to_string()))?;
     stdout
         .flush()
         .map_err(|error| CoreError::BlockingTask(error.to_string()))?;

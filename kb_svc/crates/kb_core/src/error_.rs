@@ -24,4 +24,11 @@ pub enum CoreError {
     /// 交给阻塞线程池的任务没有正常返回。
     #[error("后台阻塞任务异常结束: {0}")]
     BlockingTask(String),
+
+    /// 把系统层握手通知编码成 JSON 失败。
+    ///
+    /// 通知的类型是 `abs_kb_svc::v1::desktop::IpcReadyNotice`，字段全是字符串与
+    /// 整数，正常不会失败；留着它是为了不在这里 `unwrap`。
+    #[error("编码 kb_core 的 stdio 通知失败: {0}")]
+    Encode(#[source] serde_json::Error),
 }
