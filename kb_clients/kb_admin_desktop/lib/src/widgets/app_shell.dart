@@ -25,6 +25,7 @@ import 'dart:ui' show lerpDouble;
 import 'package:flutter/material.dart';
 
 import '../state/app_controller.dart';
+import '../state/connection_controller.dart';
 import '../theme/dsw_tokens.dart';
 import 'conversation/conversation_pane.dart';
 import 'files/workspace_file_panel.dart';
@@ -33,10 +34,13 @@ import 'sidebar/sidebar_panel.dart';
 /// 三栏框架。
 class AppShell extends StatefulWidget {
   /// 构造应用框架。
-  const AppShell({super.key, required this.controller});
+  const AppShell({super.key, required this.controller, this.connection});
 
   /// 应用状态。
   final AppController controller;
+
+  /// 与 `kb_core` 的连接状态；为 `null` 时侧边栏退化成纯本地模式。
+  final ConnectionController? connection;
 
   /// 左侧栏轨道的 key（测试用来读取动画中的列宽）。
   static const Key sidebarTrackKey = ValueKey<String>('kb.sidebar.track');
@@ -177,6 +181,7 @@ class _AppShellState extends State<AppShell> {
             animation: t,
             expandedWidth: widget.controller.sidebarWidth,
             controller: widget.controller,
+            connection: widget.connection,
           ),
         ),
       ),

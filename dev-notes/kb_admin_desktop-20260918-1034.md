@@ -873,3 +873,75 @@ kb_clients/crates/  界面之外的客户端逻辑
 - 受影响 crate 的测试全绿：`kb_client_conn_mgr` 2+5+1、`kb_core_rproxy_wire` 6、
   `kb_core_starter` 2+7+3、`kb_svc_servo_ipc` 4+7+3、`kb_core_rproxy` 6+1；
 - 客户端 rust 侧 `cargo check` 通过（改名后依赖键与 path 都换掉了）。
+
+---
+
+## 13. 界面打通：连接 kb_core 与两个列表（2026-09-18 14:45）
+
+Rust 侧与 FRB 接口在 §11 就绪，这一轮把 Dart 侧接上：**首次运行选连接方式 → 连上 →
+在侧边栏看 `kb_core` 上的工作区与会话**。
+
+### 13.1 新增的 Dart 分层
+
+```text
+lib/src/services/kb_client_api.dart      KbClientApi（抽象）+ FrbKbClientApi（真实现）
+lib/src/state/connection_controller.dart 连接状态：配置 / 握手 / 工作区 / 会话缓存
+lib/src/widgets/connection/connection_dialog.dart   「连接 kb_core」对话框（首次运行 + 切换）
+lib/src/widgets/sidebar/server_workspace_list.dart  服务端工作区 → 会话列表（只读）
+lib/src/widgets/sidebar/sidebar_panel.dart           顶部连接状态条 + 二选一列表
+lib/src/widgets/common/dsw_list_row.dart             两级列表共用的行骨架 + 时间格式
+```
+
+四条设计取舍：
+
+1. **界面不直接调生成的 FRB 代码**，一律走 `KbClientApi`。这样 widget 测试塞一个
+   假实现就够了，**不需要初始化原生库**；FRB 形状要变时改动也只收在一个类里。
+2. **`connection == null` 时侧边栏退化成纯本地模式**：现有的 29 个 widget 测试
+   因此一行没改就继续通过。
+3. **这一轮只读**：列表来自 `kb_core`，但"新建工作区 / 新建会话"要发
+   `AddWorkspace` / `CreateSession`，下一轮再接；所以「新会话」按钮仍然走本地。
+4. **两级列表的行骨架抽成共享件**（`DswListRow`）：本地列表与服务端列表长得一样，
+   抽出来之后视觉只有一处定义。
+
+### 13.2 真机跑出来才发现的两个问题
+
+`flutter test` 全绿**不等于**接通了——下面两条都是靠"真起 App + 真 kb_core"才暴露的：
+
+1. **列表不会在连接完成时换源**。`initialize()` 是在 `runApp` 之后异步跑完的，
+   而侧边栏读 `connection.connected` 决定显示本地列表还是服务端列表；它是
+   `StatelessWidget`，没有监听者，所以第一帧之后**再也没重建过**——表现是
+   "连上了，但列表还是本地那一套"。修法：把那一块包进
+   `AnimatedBuilder(animation: connection)`。
+   （widget 测试恰好没抓到，因为那里是先 `await initialize()` 再 `pumpWidget`，
+   第一帧就已经是连接态。）
+2. **`notifyListeners` 不能在 build 期间发**。工作区瓦片在 `initState` 里去拉会话，
+   而 `loadSessions` 会立刻通知 → `setState() or markNeedsBuild() called during build`。
+   修法：`addPostFrameCallback` 之后再拉。
+
+### 13.3 验证
+
+- `flutter analyze`：**No issues found**；
+- `flutter test`：**36 项全绿**（原有 29 项 + 新增 7 项）。新增的
+  `test/connection_flow_test.dart` 覆盖：首次运行 / 自动连接 / 按需拉会话且不重复拉 /
+  连接失败 / 断开清空 / 首次运行对话框保存并连接 / 连上之后侧边栏显示服务端数据；
+- **真机端到端**（`flutter build linux --debug` + `xvfb-run` 跑真 App）：
+
+  | 场景 | App 日志 | 对端日志 |
+  | :--- | :--- | :--- |
+  | `local-attach` 连真 kb_core | `[kb] 已连接「本机」：kb_core 0.1.0（协议 v1，本机），工作区 1 个` + `工作区 w-… 有 1 个会话` | `kb_core: 客户端已连接` |
+  | `tcp` 经真 rproxy | `[kb] 已连接「实验室」：kb_core 0.1.0（协议 v1，远程），工作区 1 个` + 会话 1 个 | `kb_core_rproxy: 远程客户端已连接` + `应用层握手成功` |
+
+  工作区与会话是**先用 `kb-core` 子命令建好**的，所以列表里的名字确实是磁盘上的那份数据。
+
+> 沙箱细节（不是代码问题）：App 在本机沙箱里跑需要两个环境变量——
+> `HOME`/`XDG_DATA_HOME` 指到**可写目录**（否则 `shared_preferences` 建目录失败，
+> 会在 `main` 里抛未捕获异常），以及 `KB_ADMIN_DESKTOP_CONFIG` 指向准备好的配置
+> （否则走"首次运行"，无头环境下点不到对话框）。本机也没有截图工具，所以界面是
+> 靠 App 日志 + 对端日志确认的。
+
+### 13.4 下一步
+
+- **写操作**：`AddWorkspace` / `CreateSession` / `RemoveWorkspace` / `RemoveSession`
+  接上之后，侧边栏的「+」与删除才名副其实；
+- 界面里还没有"切换连接方式"的入口之外的连接管理（例如记住上次连的那条）；
+- 会话正文：`GetSession` 还没接，中间对话区仍然用本地 `AppController` 的数据。

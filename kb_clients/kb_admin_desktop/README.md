@@ -13,11 +13,63 @@
 | 三栏框架（工作区列表 / 对话 / 文件浏览器） | ✅ | 对齐 DSH v0.1.5-rc 的布局与动效，见下节 |
 | 侧边栏折叠成图标轨道 | ✅ | 300ms 滑动 + 交叉淡入淡出；窄于 1024px 自动折叠 |
 | 文件浏览器默认隐藏、按钮调出 | ✅ | 列头右上角的开关；面板从右边缘滑入，见 `widgets/app_shell.dart` |
-| **连接 `kb_core`（配置 + 连接 + 列工作区 / 会话）** | ✅ **Rust 侧就绪** | 见下节「Rust 侧」；界面尚未接 |
+| **连接 `kb_core`：首次运行选连接方式 → 连上 → 看工作区 / 会话** | ✅ | 侧边栏顶部有连接状态条；工作区与会话来自 `kb_core`，见下节 |
 | 设置面板配置 LLM 服务与 API key | ✅ | 本地持久化；字段与服务端 `/api/settings*` 对齐 |
 | 工作区 / 会话 / 消息 | 🚧 | 本地内存 + `shared_preferences`；服务端还没有对应接口 |
 | 文件浏览器内容 | ❌ | 只有骨架与空状态，等 `kb_core` 提供目录接口 |
 | Markdown 渲染 | ❌ | 目前只切分 ``` 围栏为代码块，与网页端 `app.js` 的处理一致 |
+
+## 连接 kb_core（当前已打通的体验）
+
+```text
+启动
+  ├─ 读客户端自己的连接配置（TOML，见 kb_client_config）
+  │    ├─ 没有配置 → 弹「连接 kb_core」：选 / 填一条连接方式 → 写回配置 → 连
+  │    └─ 有配置   → 自动连缺省那条
+  ├─ 系统层握手：起本机 kb_core / 附着到本机 kb_core / 连远程网关
+  ├─ 应用层握手：Request::Hello → Reply::Hello（版本对不上会被明确拒绝）
+  └─ 连上之后：侧边栏列出 kb_core 上的工作区；展开一个工作区时按需拉它的会话
+```
+
+界面上的位置：
+
+- **侧边栏顶部**的状态条：`● 本机 · kb_core 0.1.0`（连上）/`○ 未连接 kb_core`；
+  点它打开「连接方式」对话框，右边两个小按钮是**刷新工作区**与**切换连接**；
+  折叠成图标轨道时，那一项变成插件图标，颜色反映状态（灰 / 黄 / 绿 / 红）。
+- **工作区列表**：连上之后显示的是 `kb_core` 的数据（只读，带工作区计数）；
+  每个工作区展开时会去拉它的会话，拉过就缓存；列表右上角是刷新按钮。
+- 断开/未连接时，列表退回**本地**那一套（`AppController` 里的工作区），
+  这样没有服务端也能起界面。
+
+### 手动跑一遍
+
+```bash
+# 1. 起一个 kb_core（或者干脆让客户端自己起：连接方式选 local-launch）
+cargo run -p kb_core -- --runtime-dir /tmp/kb/run --storage-dir /tmp/kb/data
+
+# 2. 用它的命令行建一个工作区与会话，好让列表非空
+cargo run -p kb_core -- --runtime-dir /tmp/kb/run --storage-dir /tmp/kb/data \
+    workspace add --name 笔记 --path /tmp/notes
+
+# 3. 起客户端，首次运行会弹「连接 kb_core」
+flutter run -d linux
+#    - 「连接已在跑的本机 kb_core」→ 运行时目录填 /tmp/kb/run
+#    - 或「启动一个本机 kb_core」→ 填 kb-core 路径 + 上面两个目录
+```
+
+配置文件在平台约定目录下（Linux：`~/.config/kb_admin_desktop/config.toml`），
+也可以显式指定：
+
+```bash
+KB_ADMIN_DESKTOP_CONFIG=/tmp/kb-admin.toml flutter run -d linux
+```
+
+它的内容就是 `kb_client_config` 的 TOML（三种 `kind` 见
+[`kb_client_conn_mgr`](../crates/kb_client_conn_mgr/README.md)）。
+
+> **当前是只读的**：列工作区 / 会话已经打通，"新建工作区 / 新建会话"还要发
+> `AddWorkspace` / `CreateSession`，下一轮再接。所以侧边栏里的「新会话」按钮仍然
+> 走本地那一套。
 
 ## Rust 侧
 
@@ -223,7 +275,7 @@ flutter run -d linux
 flutter test --run-skipped --tags golden --update-goldens test/golden
 ```
 
-### Rust 侧的工具链与构建配置
+## Rust 侧的工具链与构建配置
 
 客户端自带一个 flutter_rust_bridge 的 Rust 子项目（`rust/`），它有两处需要留意：
 

@@ -19,6 +19,7 @@ import '../../theme/app_theme.dart';
 import '../../theme/dsw_tokens.dart';
 import '../common/dsw_controls.dart';
 import '../common/dsw_icons.dart';
+import '../common/dsw_list_row.dart';
 
 /// 工作区与会话的两级列表。
 class WorkspaceList extends StatefulWidget {
@@ -153,7 +154,7 @@ class _WorkspaceTile extends StatelessWidget {
       children: <Widget>[
         HoverBuilder(
           builder: (BuildContext context, bool hovered) {
-            return _Row(
+            return DswListRow(
               height: 34,
               selected: selected || hovered,
               onTap: () => controller.selectWorkspace(workspace.id),
@@ -238,7 +239,7 @@ class _SessionRow extends StatelessWidget {
       builder: (BuildContext context, bool hovered) {
         return Padding(
           padding: const EdgeInsets.only(left: 18),
-          child: _Row(
+          child: DswListRow(
             height: 32,
             selected: selected || hovered,
             onTap: onTap,
@@ -264,7 +265,7 @@ class _SessionRow extends StatelessWidget {
                 )
               else
                 Text(
-                  _formatTime(session.updatedAt),
+                  formatSessionTime(session.updatedAt),
                   style: DswTypography.caption.copyWith(color: c.labelTertiary),
                 ),
             ],
@@ -274,94 +275,6 @@ class _SessionRow extends StatelessWidget {
     );
   }
 
-  /// 行尾的时间戳按「刚刚 / HH:mm / M月d日」三档显示。
-  String _formatTime(DateTime time) {
-    final DateTime now = DateTime.now();
-    final Duration age = now.difference(time);
-    if (age.inMinutes < 1) {
-      return '刚刚';
-    }
-    if (age.inHours < 12 && now.day == time.day) {
-      final String hh = time.hour.toString().padLeft(2, '0');
-      final String mm = time.minute.toString().padLeft(2, '0');
-      return '$hh:$mm';
-    }
-    return '${time.month}月${time.day}日';
-  }
-}
-
-/// 列表行的公共骨架：固定高度、圆角、悬停/选中底色。
-class _Row extends StatelessWidget {
-  const _Row({
-    required this.height,
-    required this.selected,
-    required this.onTap,
-    required this.leading,
-    required this.title,
-    required this.trailing,
-    this.onLeadingTap,
-  });
-
-  final double height;
-  final bool selected;
-  final VoidCallback onTap;
-
-  /// 点击行首图标时的回调；用于「展开 / 收起工作区」这类与「选中」不同的动作。
-  final VoidCallback? onLeadingTap;
-
-  final Widget leading;
-  final String title;
-  final List<Widget> trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    final DswColors c = context.dsw;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: DswMotion.fast,
-        curve: DswMotion.easeInOut,
-        height: height,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: BoxDecoration(
-          color: selected ? c.interactiveHover : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: <Widget>[
-            SizedBox(
-              width: 16,
-              child: Center(
-                child: onLeadingTap == null
-                    ? leading
-                    : GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: onLeadingTap,
-                        child: leading,
-                      ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: DswTypography.body.copyWith(
-                  fontSize: 14,
-                  height: 20 / 14,
-                  color: c.labelPrimary,
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            ...trailing,
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 /// 一个工作区都没有时的提示。
