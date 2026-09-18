@@ -6,8 +6,6 @@ members = [
     "kb_svc/crates/abs_kb_svc",
     "kb_svc/crates/abs_llm",
     "kb_svc/crates/kb_core",
-    # 第一版 Salvo + HTTP/WebSocket 实现，已废弃待删（仅作历史资料）
-    "kb_svc/crates/kb_svc_salvo",
     "kb_svc/crates/kb_svc_servo_ipc",
 
     # 插件与配套进程
