@@ -363,12 +363,7 @@ mod tests {
     ///   `false`，说明缺省行为由抽象层统一提供，本 crate 不再维护镜像类型。
     #[test]
     fn capabilities_round_trip_with_abs_llm_serde() {
-        let caps = Capabilities {
-            streaming: true,
-            reasoning: false,
-            multimodal_input: true,
-            tool_calling: false,
-        };
+        let caps = Capabilities::STREAMING + Capabilities::MULTIMODAL_INPUT;
 
         let json = serde_json::to_string(&caps).expect("应当能序列化");
         assert_eq!(

@@ -1,17 +1,18 @@
-use core::ops::{Deref, Try};
+use core::ops::Deref;
 
-use abs_str::string_view::TrStringView;
 use serde::{Deserialize, Serialize};
 
+use abs_str::string_view::TrStringView;
+use abs_buff::TrBuffRead;
+use buffex::x_deps::abs_buff;
+
 pub trait TrMediaSource {
-    type MimeStr: Deref<Target = str>;
-    type Reader<'f>
-    where
-        Self: 'f;
+    type MimeStr: TrStringView<str>;
+    type Reader: TrBuffRead<u8>;
 
     fn try_get_mime(&self) -> Option<Self::MimeStr>;
 
-    fn try_read_bin(&mut self) -> impl Try<Output = Self::Reader<'_>>;
+    fn into_buff_read(self) -> Self::Reader where Self: Sized;
 }
 
 /// 输入内容。
@@ -20,7 +21,7 @@ pub trait TrMediaSource {
 pub enum ContentPart<S, M>
 where
     S: TrStringView<str>,
-    M: TrMediaSource<MimeStr = S>,
+    M: TrMediaSource,
 {
     PlainText(S),
     ResourceUrl(S),
@@ -60,23 +61,58 @@ pub enum Role {
 /// 这里的目标不是描述 Provider 的全部功能，而是帮助上层在运行时判断
 /// 某项通用能力是否存在。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Capabilities {
-    /// 是否能够连续返回增量输出。
-    pub streaming: bool,
+pub struct Capabilities(u8);
 
-    /// 是否能够返回独立的 reasoning 内容。
-    ///
-    /// 注意：这不意味着 Provider 会返回“模型内部完整思维链”。
-    /// 很多模型根本不会公开隐藏推理过程，或者只提供经过处理的
-    /// reasoning summary。
-    pub reasoning: bool,
+impl Capabilities {
+    pub const K_STREAMING: u8 = 1u8;
+    pub const K_REASONING: u8 = 1u8 << 1;
+    pub const K_MULTIMODAL_INPUT: u8 = 1u8 << 2;
+    pub const K_TOOL_CALLING    : u8 = 1u8 << 3;
 
-    /// 是否支持多模态输入。
-    pub multimodal_input: bool,
+    const K_MASK: u8 = (1u8 << 4) - 1;
 
-    /// 是否支持工具调用。
-    pub tool_calling: bool,
+    pub const STREAMING       : Capabilities = Capabilities(Capabilities::K_STREAMING);
+    pub const REASONING       : Capabilities = Capabilities(Capabilities::K_REASONING);
+    pub const MULTIMODAL_INPUT: Capabilities = Capabilities(Capabilities::K_MULTIMODAL_INPUT);
+    pub const TOOL_CALLING    : Capabilities = Capabilities(Capabilities::K_TOOL_CALLING);
+
+    pub const fn new(k: u8) -> Self {
+        Capabilities(k & Capabilities::K_MASK)
+    }
+
+    pub const fn streaming(&self) -> bool {
+        self.0 & Self::K_STREAMING == Self::K_STREAMING
+    }
+
+    pub const fn reasoning(&self) -> bool {
+        self.0 & Self::K_REASONING == Self::K_REASONING
+    }
+
+    pub const fn multimodal_input(&self) -> bool {
+        self.0 & Self::K_MULTIMODAL_INPUT == Self::K_MULTIMODAL_INPUT
+    }
+
+    pub const fn tool_calling(&self) -> bool {
+        self.0 & Self::K_TOOL_CALLING == Self::K_TOOL_CALLING
+    }
+}
+
+impl core::ops::Add for Capabilities {
+    type Output = Self;
+
+    #[allow(clippy::suspicious_arithmetic_impl)]
+    fn add(self, rhs: Self) -> Self::Output {
+        Capabilities::new(self.0 | rhs.0)
+    }
+}
+
+impl core::ops::Sub for Capabilities {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        let v = !rhs.0;
+        Capabilities::new(self.0 & v)
+    }
 }
 
 // ============================================================================
