@@ -13,9 +13,9 @@
 
 ```text
 llm_kb/
-├── kb_svc/crates/       知识库服务本身：主进程 + 协议 + 传输实现
-├── kb_plugins/crates/   插件与配套进程：LLM 插件、跨机网关
-├── kb_clients/          客户端应用（Flutter）
+├── kb_svc/crates/       知识库服务本身：主进程 + 协议
+├── kb_plugins/crates/   插件与配套进程：LLM 插件、跨机网关、本机传输、启动器
+├── kb_clients/          客户端：应用（Flutter）+ 界面之外的客户端 crate
 ├── dev-notes/           开发日志：技术决策的前因后果（新记录都写这里）
 ├── external/            临时验证工程（不属于 workspace）；整个目录已 gitignore
 ├── AGENTS.md            代码修改纪律
@@ -33,10 +33,7 @@ llm_kb/
 | `abs_kb_svc` | **协议聚合层**：把各协议 crate 挂到稳定的 `abs_kb_svc::v1::desktop::*` 路径下，**自己不定类型** | ✅ |
 | `abs_kb_svc_v1_desktop` | **协议 v1 桌面端**：`kb_admin_desktop` × `kb_core` 的数据（15 请求 / 11 应答 / 9 事件）、按业务域拆分的异步 RPC trait、应用层握手。**协议内容的唯一出处** | ✅ 首批域 |
 | `abs_kb_core_handshake` | **系统层握手**：`kb_core` 用 `--handshake-prompt=stdio` 公布的 `IpcReadyNotice`（启动方据此找到 IPC 端点） | ✅ |
-| `kb_core_starter` | 启动 `kb_core` 子进程并**异步**等它公布 IPC 端点文件名的可取消 future；rproxy 与客户端共用 | ✅ |
-| `kb_svc_servo_ipc` | 上面那套协议的**传输实现**：ipc-channel 的引导、三通道连接、客户端代理、服务端派发 | ✅ 可跑 |
 | `abs_llm` | LLM 的**语义抽象**：对话角色、增量输出、用量、能力集等与 provider 无关的词汇 | ✅ |
-| `kb_svc_salvo` | 第一版基于 Salvo + HTTP/WebSocket 的实现 | ❌ **已废弃**，待删（仅作历史资料） |
 
 ### `kb_plugins/crates/` —— 插件与配套进程
 
@@ -45,12 +42,24 @@ llm_kb/
 | `kb_rig_llm_v1_agent` | 用 `rig` 直连 LLM 服务商，自己保留完整对话上下文 | 🚧 |
 | `kb_rig_llm_v1_adapt` | rig 的原始数据 → `abs_llm::v1` 的转换 | 🚧 |
 | `kb_core_rproxy` | **跨机网关**：启动一个 `kb_core`，自己监听 TCP，把远程访问者当作"格式与 ipc 客户端相同"的客户端转发 | ✅ 可跑（**无鉴权、无 TLS**，仅用于受信网络） |
+| `kb_core_rproxy_wire` | 网关的 **TCP 帧格式**（纯编解码）：网关与远程客户端共用同一份 | ✅ |
+| `kb_core_starter` | 启动 `kb_core` 子进程并**异步**等它公布 IPC 端点文件名的可取消 future；网关与客户端共用 | ✅ |
+| `kb_svc_servo_ipc` | 协议的本机**传输实现**：ipc-channel 的引导、三通道连接、客户端代理、服务端派发 | ✅ 可跑 |
 
-### `kb_clients/` —— 客户端
+### `kb_clients/crates/` —— 客户端侧基础设施
+
+界面之外的客户端逻辑放这里，以便复用与单独测试。
+
+| crate | 职责 | 状态 |
+| :--- | :--- | :--- |
+| `kb_client_config` | 客户端**自己的连接配置**（TOML）：三种连接方式、平台路径、首次生成、原子写 | ✅ |
+| `kb_client_conn_mgr` | **连接管理器**：按一条连接方式接上 `kb_core`（本机启动 / 本机附着 / 远程 TCP）+ 应用层握手 + 列工作区 / 会话 | ✅ |
+
+### `kb_clients/` —— 客户端应用
 
 | 目录 | 职责 | 状态 |
 | :--- | :--- | :--- |
-| `kb_admin_desktop` | Flutter 桌面客户端，含 flutter_rust_bridge 的 Rust 侧 | 🚧 界面骨架 |
+| `kb_admin_desktop` | Flutter 桌面客户端（界面）。其 Rust 侧（flutter_rust_bridge）已经把上面两个 crate 接上：读 / 写配置、选连接方式、连接、列工作区 / 会话 | 🚧 界面骨架 + 连接就绪 |
 
 ## 3. 一次请求怎么走
 
@@ -78,6 +87,22 @@ kb_admin_desktop / 远程客户端
   `abs_kb_svc` 只是把它们聚合到稳定路径下。换传输只换实现 crate。
 - 两条链路的细节：本机 IPC 见 `kb_svc_servo_ipc` 的 crate 文档，
   跨机见 `kb_core_rproxy` 的 README。
+
+### 客户端怎么选连接方式
+
+客户端的连接方式是**它自己的配置**（`kb_core` 不参与）：
+
+```text
+启动 kb_admin_desktop
+  └─ kb_client_config：读配置
+       ├─ 没有 → 界面问用户：启动本机 kb_core / 连已在跑的本机 kb_core / 连远程网关
+       │          → 写回 TOML（原子写）
+       └─ 有   → 取 default 那一条
+  └─ kb_client_conn_mgr：按这条连接方式做两级握手，然后列工作区 / 会话
+```
+
+三种 `kind`（`local-launch` / `local-attach` / `tcp`）的语义与时限见
+`kb_clients/crates/kb_client_conn_mgr/README.md`。
 
 ## 4. 当前状态
 
@@ -113,6 +138,9 @@ kb_admin_desktop / 远程客户端
 - `kb_svc/crates/abs_kb_svc/README.md`：聚合层的用途与"什么时候不必经过它"。
 - `kb_svc/crates/kb_core/README.md`：主进程的操作手册（命令行、存储布局、实测命令）。
 - `kb_plugins/crates/kb_core_rproxy/README.md`：跨机网关的用法与能力边界。
-- `kb_svc/crates/kb_core_starter/README.md`：启动 `kb_core` 并等 IPC 端点的那个 crate。
+- `kb_plugins/crates/kb_core_starter/README.md`：启动 `kb_core` 并等 IPC 端点的那个 crate。
+- `kb_plugins/crates/kb_core_rproxy_wire/README.md`：跨机网关的 TCP 帧格式（服务端与客户端共用）。
+- `kb_clients/crates/kb_client_config/README.md`：客户端的连接配置（TOML）。
+- `kb_clients/crates/kb_client_conn_mgr/README.md`：连接管理器（三种连接方式 + 查询）。
 - `dev-notes/`：技术决策的前因后果与开放事项，索引见
   [`dev-notes/llm_kb-20260917-1655.md`](dev-notes/llm_kb-20260917-1655.md)。

@@ -6,7 +6,7 @@
 // Static analysis wrongly picks the IO variant, thus ignore this
 // ignore_for_file: argument_type_not_assignable
 
-import 'api/simple.dart';
+import 'api/kb.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -27,7 +27,49 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String dco_decode_String(dynamic raw);
 
   @protected
+  bool dco_decode_bool(dynamic raw);
+
+  @protected
+  ConnectionView dco_decode_box_autoadd_connection_view(dynamic raw);
+
+  @protected
+  ConfigView dco_decode_config_view(dynamic raw);
+
+  @protected
+  ConnectReport dco_decode_connect_report(dynamic raw);
+
+  @protected
+  ConnectionState dco_decode_connection_state(dynamic raw);
+
+  @protected
+  ConnectionView dco_decode_connection_view(dynamic raw);
+
+  @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
+  List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<ConnectionView> dco_decode_list_connection_view(dynamic raw);
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<SessionView> dco_decode_list_session_view(dynamic raw);
+
+  @protected
+  List<WorkspaceView> dco_decode_list_workspace_view(dynamic raw);
+
+  @protected
+  SessionView dco_decode_session_view(dynamic raw);
+
+  @protected
+  SessionsReport dco_decode_sessions_report(dynamic raw);
+
+  @protected
+  int dco_decode_u_32(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -36,10 +78,64 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void dco_decode_unit(dynamic raw);
 
   @protected
+  WorkspaceView dco_decode_workspace_view(dynamic raw);
+
+  @protected
+  WorkspacesReport dco_decode_workspaces_report(dynamic raw);
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
+  bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  ConnectionView sse_decode_box_autoadd_connection_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ConfigView sse_decode_config_view(SseDeserializer deserializer);
+
+  @protected
+  ConnectReport sse_decode_connect_report(SseDeserializer deserializer);
+
+  @protected
+  ConnectionState sse_decode_connection_state(SseDeserializer deserializer);
+
+  @protected
+  ConnectionView sse_decode_connection_view(SseDeserializer deserializer);
+
+  @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<ConnectionView> sse_decode_list_connection_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  List<SessionView> sse_decode_list_session_view(SseDeserializer deserializer);
+
+  @protected
+  List<WorkspaceView> sse_decode_list_workspace_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SessionView sse_decode_session_view(SseDeserializer deserializer);
+
+  @protected
+  SessionsReport sse_decode_sessions_report(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -48,13 +144,55 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
+  WorkspaceView sse_decode_workspace_view(SseDeserializer deserializer);
+
+  @protected
+  WorkspacesReport sse_decode_workspaces_report(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer);
+  void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
-  void sse_encode_String(String self, SseSerializer serializer);
+  void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_connection_view(
+    ConnectionView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_config_view(ConfigView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_connect_report(ConnectReport self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_connection_state(
+    ConnectionState self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_connection_view(
+    ConnectionView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_connection_view(
+    List<ConnectionView> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_prim_u_8_strict(
@@ -63,16 +201,46 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_session_view(
+    List<SessionView> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_workspace_view(
+    List<WorkspaceView> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_session_view(SessionView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_sessions_report(
+    SessionsReport self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer);
+
+  @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
 
   @protected
-  void sse_encode_i_32(int self, SseSerializer serializer);
+  void sse_encode_workspace_view(WorkspaceView self, SseSerializer serializer);
 
   @protected
-  void sse_encode_bool(bool self, SseSerializer serializer);
+  void sse_encode_workspaces_report(
+    WorkspacesReport self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer);
 }
 
 // Section: wire_class

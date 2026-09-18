@@ -1,0 +1,41 @@
+[package]
+edition = "2024"
+name = "kb_client_conn_mgr"
+version = "0.1.0"
+
+description = "kb_admin_desktop 的连接管理器：按配置把客户端接上 kb_core（本机 IPC / 远程 TCP）。"
+
+[dependencies]
+# 「可取消 future」的抽象与宏：本 crate 的公开异步入口都用它展开成
+# 「不可取消 / 可取消」两条路径（见 `AGENTS.md` 第 4 条）。
+abs_cancel = { workspace = true }
+gen_mcf2 = { workspace = true }
+
+# 完成量：把阻塞的连接收敛到专职线程，future 里只轮询它。
+futures-channel = "0.3"
+
+log = { workspace = true }
+thiserror = { workspace = true }
+
+# 协议：客户端要发的是它定义的请求，解析的是它定义的应答。
+abs_kb_svc_v1_desktop = { path = "../../../kb_svc/crates/abs_kb_svc_v1_desktop" }
+
+# 连接方式的定义（三种 kind）与缺省值。
+kb_client_config = { path = "../kb_client_config" }
+
+# 本机路径的两半：起 kb_core 子进程（系统层握手）与连它的 IPC。
+kb_core_starter = { path = "../../../kb_plugins/crates/kb_core_starter" }
+kb_svc_servo_ipc = { path = "../../../kb_plugins/crates/kb_svc_servo_ipc" }
+
+# 远程路径：与网关共用同一份 TCP 帧编解码。
+kb_core_rproxy_wire = { path = "../../../kb_plugins/crates/kb_core_rproxy_wire" }
+
+[dev-dependencies]
+# 驱动「与运行时无关」的 future：最轻的 block_on 就够了。
+futures-lite = { workspace = true }
+
+# `examples/connect.rs` 是个手工验证用的小 CLI，日志走 env_logger。
+env_logger = { version = "0.11.*" }
+
+# 本地路径的测试要临时目录；也用于假网关。
+tempfile = { version = "3.*" }

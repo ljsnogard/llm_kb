@@ -20,7 +20,7 @@ gen_mcf2 = { workspace = true }
 # 刻意**不**依赖 `abs_kb_svc` / `abs_kb_svc_v1_desktop`：本 crate 只需要
 # "端点就绪"这一条消息，不该把工作区 / 会话 / 服务那整套业务协议（以及它们背后的
 # `abs_llm` 等）拖进调用方的依赖树。这也是系统层通知单独成 crate 的理由。
-abs_kb_core_handshake = { path = "../abs_kb_core_handshake" }
+abs_kb_core_handshake = { path = "../../../kb_svc/crates/abs_kb_core_handshake" }
 
 # 完成量：把「阻塞读一行」收敛到专职线程上，future 里只轮询它。
 futures-channel = "0.3"

@@ -1,7 +1,10 @@
 # kb_admin_desktop
 
-知识库的桌面客户端（Flutter）。通过 HTTP / WebSocket 与 `kb_core` / `kb_svc_salvo`
-通信，提供工作区管理、提问与文件浏览。
+知识库的桌面客户端（Flutter）。**通过 `kb_core` 的协议**（本机 IPC 或经
+`kb_core_rproxy` 的 TCP）提供工作区管理、提问与文件浏览。
+
+> 早期版本走 `kb_svc_salvo` 的 HTTP / WebSocket；那套通道已废弃，现在是
+> `abs_kb_svc_v1_desktop` 的协议 + `kb_svc_servo_ipc` 的传输。
 
 ## 当前进度
 
@@ -10,11 +13,152 @@
 | 三栏框架（工作区列表 / 对话 / 文件浏览器） | ✅ | 对齐 DSH v0.1.5-rc 的布局与动效，见下节 |
 | 侧边栏折叠成图标轨道 | ✅ | 300ms 滑动 + 交叉淡入淡出；窄于 1024px 自动折叠 |
 | 文件浏览器默认隐藏、按钮调出 | ✅ | 列头右上角的开关；面板从右边缘滑入，见 `widgets/app_shell.dart` |
+| **连接 `kb_core`（配置 + 连接 + 列工作区 / 会话）** | ✅ **Rust 侧就绪** | 见下节「Rust 侧」；界面尚未接 |
 | 设置面板配置 LLM 服务与 API key | ✅ | 本地持久化；字段与服务端 `/api/settings*` 对齐 |
 | 工作区 / 会话 / 消息 | 🚧 | 本地内存 + `shared_preferences`；服务端还没有对应接口 |
 | 文件浏览器内容 | ❌ | 只有骨架与空状态，等 `kb_core` 提供目录接口 |
-| HTTP / WebSocket 通道 | ❌ | 尚未接入 `/api/settings*` 与 `/ws/chat` |
 | Markdown 渲染 | ❌ | 目前只切分 ``` 围栏为代码块，与网页端 `app.js` 的处理一致 |
+
+## Rust 侧
+
+界面之外的逻辑一律在 Rust 侧（`rust/`，flutter_rust_bridge），并通过
+`lib/src/rust/` 暴露给 Dart。当前已就绪的是**连接**这一块：
+
+```text
+lib/src/rust/api/kb.dart       ← 生成的 Dart 接口（全部 Future<...>）
+        │
+rust/src/api/kb.rs             ← 扁平视图 + 持有已连上的客户端
+        │
+kb_clients/crates/kb_client_config   ← 连接配置（TOML、路径、首次生成）
+kb_clients/crates/kb_client_conn_mgr ← 连接管理器（本机启动 / 本机附着 / 远程 TCP）
+```
+
+Dart 侧拿到的接口（都是 `Future`，因为 FRB 会把普通函数放到自己的工作线程池上）：
+
+| 函数 | 用途 |
+| :--- | :--- |
+| `configFilePath()` / `loadConfig()` / `saveConfig(...)` | 读 / 写客户端自己的连接配置；`exists == false` 表示**首次运行** |
+| `connectionKinds()` / `connectionKindDescription(kind)` | 界面填下拉框用的三种连接方式与说明 |
+| `suggestedLocalConnection(name)` | 首次运行时预填的"启动本机 kb_core" |
+| `connectTo(profile)` / `disconnect()` / `connectionState()` | 连接、断开、看当前连的是谁 |
+| `listWorkspaces()` / `listSessions(workspaceId)` | 连接之后的查询 |
+
+细节与设计取舍见 [`kb_client_conn_mgr`](../crates/kb_client_conn_mgr/README.md) 与
+`dev-notes/kb_admin_desktop-20260918-1034.md`。
+
+## 重新生成 FRB 绑定（改了 Rust 侧之后）
+
+`lib/src/rust/` 下的东西**都是生成的**，不要手改。只要 Rust 侧的 **FFI 可见面**
+变了，就必须重新生成；生成的产物跟源码一起提交。
+
+### 什么时候要重新生成
+
+| 改动 | 要不要重新生成 |
+| :--- | :--- |
+| `rust/src/api/**` 里增删函数、改函数签名、改返回类型 | ✅ 要 |
+| 增删 / 改 `rust/src/api/**` 里的 `struct` / `enum` 的**字段**（FFI 会镜像它们） | ✅ 要 |
+| 改 `flutter_rust_bridge.yaml`（`rust_input` / `dart_output` 等） | ✅ 要 |
+| 只改函数体、内部逻辑；改 `kb_client_conn_mgr` 等依赖 crate 的实现 | ❌ 不要（FFI 面没变） |
+| 改依赖 crate 的**代码**，但 `crate::api` 里的签名照旧 | ❌ 不要 |
+| 把依赖 crate **改名**，但 `crate::api` 里的符号路径照旧 | ❌ 不要（渲染出来的 Dart 名从函数名来） |
+| 给 `rust/Cargo.toml` 加依赖（只要没改 API 形状） | ❌ 不要 |
+
+判断标准只有一条：**`lib/src/rust/api/*.dart` 里公开的名字/字段会不会变**。
+拿不准就跑一次生成，看 `git diff` 是否为空。
+
+### 前置条件
+
+1. `flutter` / `dart` 在 `PATH` 上（`flutter --version` 能正常输出）；
+2. `flutter_rust_bridge_codegen` 已安装，且**版本与 `rust/Cargo.toml` 里钉的
+   `flutter_rust_bridge` 一致**（当前两边都是 `2.13.0`）：
+
+   ```bash
+   flutter_rust_bridge_codegen --version     # 期望 2.13.0
+   grep '^flutter_rust_bridge' rust/Cargo.toml
+   ```
+
+   不一致时先对齐：`cargo install flutter_rust_bridge_codegen --version 2.13.0 --locked`；
+3. 生成过程会调用 `flutter`（用来做 Dart 侧格式化与版本探测），所以它**要能写自己的
+   SDK cache**。
+
+### 步骤
+
+```bash
+# 1. 进 Flutter 工程根（flutter_rust_bridge.yaml 所在处）
+cd kb_clients/kb_admin_desktop
+
+# 2. 确认路径与（本机沙箱才需要的）CARGO_HOME
+export PATH="/root/.cargo/bin:/root/develop/flutter/bin:$PATH"
+export CARGO_HOME="$PWD/../../external/cargo-home"   # 本机沙箱：~/.cargo 只读
+
+# 3. 生成（读 flutter_rust_bridge.yaml，不需要额外参数）
+flutter_rust_bridge_codegen generate
+
+# 4. Rust 侧编译
+(cd rust && cargo check)
+
+# 5. Dart 侧静态检查
+flutter analyze
+```
+
+`flutter_rust_bridge.yaml` 的内容决定了它会看什么、写哪里：
+
+```yaml
+rust_input: crate::api          # 只扫这个模块；不要写整个 crate，原因见下
+rust_root: rust/
+dart_output: lib/src/rust
+```
+
+`rust_input` **只列 `crate::api`** 是有意的：一旦把协议 crate（如
+`abs_kb_svc_v1_desktop`）也列进来，FRB 会把那里的类型也镜像一遍，其中**直接持有
+跨 crate 类型的结构体会退化成 opaque 句柄**（实测 27 个）。所以 FFI 面只用本地的
+扁平结构体，业务类型在 `rust/src/api/kb.rs` 里就地翻平。
+
+### 生成会动哪些文件
+
+| 文件 | 说明 |
+| :--- | :--- |
+| `rust/src/frb_generated.rs` | 整体重写 |
+| `lib/src/rust/frb_generated.dart` / `.io.dart` / `.web.dart` | 整体重写 |
+| `lib/src/rust/api/<模块>.dart` | 按 `crate::api` 的子模块逐个生成 |
+
+> ⚠️ **删掉一个 api 模块时，它对应的 Dart 文件不会被自动删除**（`generate` 只写，
+> 不清理）。要手动删：`rm lib/src/rust/api/<旧模块>.dart`，否则 `flutter analyze` 会
+> 抱着一堆引用已删符号的代码报错。`lib/src/rust/third_party/` 同理（本项目不用它）。
+
+### 生成完检查什么
+
+1. `git status`：应当只看到上面那几张表里的文件 + 你改的 Rust 源码，**没有**意外文件；
+2. `git diff lib/src/rust/api/<模块>.dart`：新函数/字段是不是都在，名字是不是你期望的
+   （FRB 会把 `snake_case` 转成 `camelCase`，把 `ConnectionView` 直接当类名）；
+3. `cargo check`（在 `rust/`）通过；
+4. `flutter analyze` 无 issue；
+5. 如果这次改的是**界面要用**的接口，顺手跑一下集成测试：
+   `flutter test integration_test -d linux`（需要 clang/cmake/ninja/GTK 与显示服务，
+   本机沙箱里用 `xvfb-run`）。
+
+### 常见故障
+
+| 现象 | 原因 / 处理 |
+| :--- | :--- |
+| `Error: Dart/Flutter toolchain not available` | `flutter` 不在 `PATH`，或 SDK cache 不可写（见下） |
+| `Read-only file system`，指向 `flutter/bin/cache/engine.stamp.tmp` / `engine.realm` | SDK 目录只读。本机沙箱要把 Flutter SDK 的路径一起放开再跑 |
+| `cargo check` 报 `cannot find \`xxx\` in \`api\`` | 生成的 `frb_generated.rs` 还是旧的：重新生成一次 |
+| `error: lifetime bound not satisfied`，位置在 `frb_generated.rs` 的 `wrap_async` | FRB **2.13** 为 `async fn` 生成的代码在当前 nightly 上编译不过（rustc HRTB 限制）。把 `crate::api` 里的异步函数写成**同步函数 + `block_on`**（现在的做法，理由见 `rust/src/api/kb.rs` 的模块文档）；Dart 侧仍是 `Future` |
+| `flutter analyze` 报引用了已删的函数 | 旧的 `lib/src/rust/api/*.dart` 没删干净，见上面的 ⚠️ |
+| 生成的 Dart 里某个类型成了 opaque（`implements RustOpaqueInterface`） | 那个结构体直接持有了协议 crate 的类型；在 `crate::api` 里加一层扁平视图再映射 |
+
+### 依赖 crate 变了但 FFI 面没变时
+
+`kb_client_config` / `kb_client_conn_mgr`（以及它们背后的 `kb_svc` 协议 crate）都是用
+path 依赖进来的：**改它们的实现不需要重新生成绑定**，但客户端 rust 侧要重新编译一次：
+
+```bash
+(cd rust && cargo check)     # 或 flutter run / flutter build
+```
+
+如果改的是它们的**公开 API 形状**（函数签名、结构体字段），先按上面的判断标准确认
+FFI 面是否真的没变——变了就重新生成。
 
 ## 三栏框架
 

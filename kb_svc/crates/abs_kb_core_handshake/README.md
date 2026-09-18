@@ -70,6 +70,6 @@ cargo test -p abs_kb_core_handshake
 
 - [`abs_kb_svc_v1_desktop/README.md`](../abs_kb_svc_v1_desktop/README.md)：
   应用层握手与业务协议；
-- [`kb_core_starter/README.md`](../kb_core_starter/README.md)：本 crate 的主要调用方；
+- [`kb_core_starter/README.md`](../../../kb_plugins/crates/kb_core_starter/README.md)：本 crate 的主要调用方；
 - [`dev-notes/kb_admin_desktop-20260918-1034.md`](../../../dev-notes/kb_admin_desktop-20260918-1034.md) §9：
   两个层次都算公开协议这条决定的来龙去脉。

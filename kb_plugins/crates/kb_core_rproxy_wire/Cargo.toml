@@ -1,0 +1,16 @@
+[package]
+edition = "2024"
+name = "kb_core_rproxy_wire"
+version = "0.1.0"
+
+description = "kb_core_rproxy 的 TCP 帧格式：服务端（rproxy）与客户端共用同一份编解码。"
+
+[dependencies]
+# 帧里装的载荷就是协议类型本身——换的是搬运方式，类型一个都不改。
+abs_kb_svc_v1_desktop = { path = "../../../kb_svc/crates/abs_kb_svc_v1_desktop" }
+
+# 与 ipc-channel 内部一致的编解码器；协议类型已有 postcard 往返测试。
+postcard = { version = "1.1", default-features = false, features = ["use-std"] }
+
+# 编解码函数要对载荷类型约束 `Serialize` / `DeserializeOwned`，因此要能命名 serde。
+serde = { version = "1.*", default-features = false }

@@ -296,7 +296,7 @@ pub trait TrSessionService: TrKbEndpoint {
 ## 4. 建议的 crate 形状（草案，尚未实施）
 
 ```text
-kb_svc/crates/kb_svc_servo_ipc/
+kb_plugins/crates/kb_svc_servo_ipc/
 ├── Cargo.toml          # ipc-channel 0.23 (async) + abs_kb_svc；不依赖 tokio / compio
 └── src/
     ├── lib.rs          # 模块地图与公开导出（逐个列举）
@@ -353,7 +353,7 @@ mock 的样板价值：实现方（`kb_svc_servo_ipc` 的客户端代理、`kb_c
 
 ### 5.3 第 3–5 步实际落成的东西
 
-`kb_svc/crates/kb_svc_servo_ipc/`：
+`kb_plugins/crates/kb_svc_servo_ipc/`：
 
 | 文件 | 内容 |
 | :--- | :--- |

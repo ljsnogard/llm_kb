@@ -21,5 +21,18 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 flutter_rust_bridge = "=2.13.0"
 
+# 客户端侧的连接逻辑（配置 + 三种连接方式的连接管理器）。
+# 这两个 crate 在主 workspace 的 `kb_clients/crates/` 下，用 path 引用即可
+# ——跨 workspace 的 path 依赖已实测可用（见
+# dev-notes/kb_admin_desktop-20260918-1034.md §7.2）。
+kb_client_config = { path = "../../crates/kb_client_config" }
+kb_client_conn_mgr = { path = "../../crates/kb_client_conn_mgr" }
+
+# 协议类型：`list_sessions` 要把界面传来的工作区标识包成 `WorkspaceId`。
+abs_kb_svc_v1_desktop = { path = "../../../kb_svc/crates/abs_kb_svc_v1_desktop" }
+
+# 把 `kb_client_conn_mgr` 的异步接口同步化（为什么，见 `src/api/kb.rs` 的模块文档）。
+futures-lite = "2"
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

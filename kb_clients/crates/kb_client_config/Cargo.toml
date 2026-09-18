@@ -1,0 +1,19 @@
+[package]
+edition = "2024"
+name = "kb_client_config"
+version = "0.1.0"
+
+description = "kb_admin_desktop 自己的连接配置：读 / 写 / 首次生成（TOML）。"
+
+[dependencies]
+# 配置文件的格式。刻意不用 serde_json：这是**给人手改的**文件，需要注释与
+# 不那么吵的嵌套；协议那边才用 JSON/postcard。
+serde = { version = "1.*", features = ["derive"] }
+toml = "0.9"
+
+log = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# 用真实临时目录验证"原子写 + 读回"。
+tempfile = { version = "3.*" }

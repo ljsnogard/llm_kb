@@ -463,10 +463,9 @@ kb_plugins/crates/kb_core_rproxy_client/     ← 新 crate（lib）
 1. ~~**客户端配置文件的格式与位置**（§2.3 的 JSON 提案、平台目录规则、`kind` 的三个取值、
    `default` + 顺序回退的语义、配置只读还是可被界面写回）~~ → **已拍板：TOML；
    启动时读或创建；"只读"这条被"首次运行要能生成"取代**；
-2. **新 crate 的名字与放置**：~~`kb_core_starter`（`kb_plugins/crates/`）~~ →
-   **已落地在 `kb_svc/crates/`**（服务侧，不是插件，见 §9.2）；
-   剩下的：TCP 客户端 crate 的名字（`kb_core_rproxy_client`？）与它和帧编解码的关系
-   （一个 crate 两个模块 vs 两个 crate）；
+2. **新 crate 的名字与放置**：`kb_core_starter` 先落在 `kb_svc/crates/`，
+   **后又按"插件与配套进程"的口径搬回 `kb_plugins/crates/`**（见 §12）；
+   TCP 客户端与帧编解码的切法也已落地（`kb_client_conn_mgr` + `kb_core_rproxy_wire`，见 §11）；
 3. **帧编解码的共享方式**：把 rproxy 的 `frame_.rs` 拆成纯编解码 + IO 包装，前者进共享 crate；
    **同时**决定 rproxy 的 TCP 帧格式从此是否算对外约定（远程客户端要照着它实现，实际上已经是了）；
 4. **客户端 Rust crate 是否并入主 workspace**：现在它是独立 workspace（空 `[workspace]`），
@@ -503,7 +502,7 @@ test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ```console
 $ cd external/feasibility-spike/ext-consumer && CARGO_HOME=…/external/cargo-home cargo check
     Checking abs_kb_svc v0.1.0 (/root/projects/me.noli/llm_kb/kb_svc/crates/abs_kb_svc)
-    Checking kb_svc_servo_ipc v0.1.0 (/root/projects/me.noli/llm_kb/kb_svc/crates/kb_svc_servo_ipc)
+    Checking kb_svc_servo_ipc v0.1.0 (/root/projects/me.noli/llm_kb/kb_plugins/crates/kb_svc_servo_ipc)
     Checking ext-consumer v0.0.0 (/root/projects/me.noli/llm_kb/external/feasibility-spike/ext-consumer)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 09s   # 通过
 ```
@@ -559,7 +558,7 @@ stdout 上**正好一行**，与 `launch_` 的解析逻辑对得上。
 - 1749 号记录 §7：两层握手、rproxy 的职责、放置、安全前提——本报告全部沿用；
 - 1341 号记录：客户端通信需求与协议数据来源；
 - `kb_svc/crates/abs_kb_svc_v1_desktop/src/handshake_.rs`：两个层面握手的完整说明；
-- `kb_svc/crates/kb_svc_servo_ipc/src/lib.rs`：本机 IPC 的引导（rendezvous）机制；
+- `kb_plugins/crates/kb_svc_servo_ipc/src/lib.rs`：本机 IPC 的引导（rendezvous）机制；
 - `kb_plugins/crates/kb_core_rproxy/README.md`：TCP 帧格式与当前能力边界。
 
 ---
@@ -602,20 +601,24 @@ stdout 上**正好一行**，与 `launch_` 的解析逻辑对得上。
 
 | 位置 | 内容 |
 | :--- | :--- |
-| `kb_svc/crates/kb_core_starter/` | 新 crate（lib）。公开面：`LaunchSpec` / `Launched` / `LaunchError` / `start()` / `default_kb_core_path()` / `kb_core_beside()`；私有模块 `error_` / `launch_` / `notice_` |
+| `kb_plugins/crates/kb_core_starter/` | 新 crate（lib）。公开面：`LaunchSpec` / `Launched` / `LaunchError` / `start()` / `default_kb_core_path()` / `kb_core_beside()`；私有模块 `error_` / `launch_` / `notice_` |
 | `src/launch_.rs` | `#[gen_mcf2::gen_may_cancel_future(Start, pub)]` 展开出 `StartAsync`：`.await` 为不可取消路径，`.may_cancel_with(token).await` 为可取消路径 |
 | `src/notice_.rs` | 解析协议类型 `abs_kb_svc::v1::desktop::IpcReadyNotice`（只取 `ipc_name_file`）；纯函数，可单测 |
 | `kb_svc/crates/abs_kb_svc_v1_desktop/src/handshake_.rs` | 新增系统层握手消息：`IpcReadyNotice` + `HandshakeNoticeKind`（`event` 线上取值 `"ipc_ready"`），含 JSON 线格式与 postcard 往返测试 |
 | `kb_svc/crates/kb_core/src/serve_.rs` | 打通知改成用 `IpcReadyNotice` 序列化（不再是 `serde_json::json!` 现拼） |
 | `tests/launch.rs` | 集成测试：假 `kb_core` 脚本覆盖 正常 / 提前退出 / 坏通知 / 可执行文件不可用 / 已取消不起进程 / **等待中取消并结束子进程** / `kb_core_beside` |
 | `kb_plugins/crates/kb_core_rproxy/` | 删 `src/launch_.rs`（-163 行）；`main.rs` 改用 `kb_core_starter::start(&spec).await`；`Cargo.toml` 去掉 `serde_json`（只有旧 `launch_` 用它），保留 `thiserror`（`ring_` 在用） |
-| 根 `Cargo.toml` | 把 `kb_svc/crates/kb_core_starter` 加进成员（**服务侧**那一组，不是插件组） |
+| 根 `Cargo.toml` | 把 `kb_core_starter` 加进成员 |
 
 > **放置修正（2026-09-18 11:40）**：§3.2 与 §6 第 2 条原建议放在
-> `kb_plugins/crates/`（沿用 1749 §7.5"启动器算插件"的说法），实际落地改为
-> **`kb_svc/crates/kb_core_starter`**：它是 `kb_core` 的配套启动逻辑、属于**服务侧基础设施**，
-> 而 `kb_core_rproxy` 那种"对外提供服务的网关"才算插件。§3.2 的其余建议（依赖面最小、
-> 不管 IPC 连接、超时交给调用方）都照原样落地。
+> `kb_plugins/crates/`（沿用 1749 §7.5"启动器算插件"的说法），实际落地一度改为
+> `kb_svc/crates/`（理由：它是 `kb_core` 的配套启动逻辑、属于服务侧基础设施，
+> 而 `kb_core_rproxy` 那种"对外提供服务的网关"才算插件）。
+>
+> **再修订（2026-09-18 14:10，见 §12）**：最后还是回到 `kb_plugins/crates/`。
+> 现在的口径是"**`kb_svc/crates/` 只放协议与主进程本身；围着 `kb_core` 转的东西
+> ——网关、启动器、本机传输——都算"插件与配套进程"**"。
+> §3.2 的其余建议（依赖面最小、不管 IPC 连接、超时交给调用方）照原样落地。
 
 关键形状（对应决策 4）：
 
@@ -724,3 +727,149 @@ abs_kb_svc                      ← 聚合层（只有一条 pub use 别名）
 > `[workspace.lints.*]`，所以它们重新显形了）：`abs_art-bridge` / `tokio` 是"声明了但
 > 没有成员使用的 workspace 依赖"；`kb_rig_llm_v1_agent` 有 4 个未使用依赖；
 > `abs_llm` 的 `try_trait_v2` 声明了但没用到。这些是清单层面的清理，另行处理。
+
+---
+
+## 11. 连接逻辑落地（2026-09-18 13:25）
+
+按 §9.1 的四条决策实现"检查或生成配置 → 让用户选连接方式 → 按选择尝试连接"的
+**Rust 侧 + FRB 接口**（界面按约定留到下一轮）。
+
+### 11.1 三个新 crate
+
+| crate | 位置 | 内容 |
+| :--- | :--- | :--- |
+| `kb_client_config` | `kb_clients/crates/` | 客户端自己的连接配置：**TOML**、三种 `kind`、平台路径、首次生成、原子写、校验 |
+| `kb_client_conn_mgr` | `kb_clients/crates/` | 连接管理器：`connect(profile)` 走完两级握手，然后 `list_workspaces` / `list_sessions`；自带运行时无关的 `TimeoutToken` |
+| `kb_core_rproxy_wire` | `kb_svc/crates/` →（§12 起）`kb_plugins/crates/` | 从 `kb_core_rproxy` 的 `frame_.rs` 提取的**纯帧编解码**；网关与远程客户端共用同一份 |
+
+第三条不完全是"客户端基础设施"，当时放 `kb_svc/crates/`（与协议、传输实现同组）；
+§12 起连同 `kb_core_starter`、`kb_svc_servo_ipc` 一起搬到了 `kb_plugins/crates/`。
+`kb_core_rproxy` 现在只保留几行 compio 写包装。
+
+### 11.2 三种连接方式怎么落地的
+
+| `kind` | 系统层 | 应用层 |
+| :--- | :--- | :--- |
+| `local-launch` | `kb_core_starter::start`（起子进程 + 读就绪通知）+ `kb_svc_servo_ipc::Client::connect_with_timeout` | `Request::Hello` |
+| `local-attach` | 只连 IPC（同上） | 同上 |
+| `tcp` | `kb_client_conn_mgr::TcpClient`（写线程 + 读线程 + `request_id` 配对 + 按帧种类分派） | 同上（经信封） |
+
+两条硬约定的落法：
+
+- **阻塞不进 future**：`Client::connect_with_timeout`（本机 IPC，含重试）与
+  `TcpClient::connect`（TCP）都是阻塞调用，统一搬到**专职线程**上，future 只轮询
+  完成量 + 取消令牌；
+- **超时由调用方决定**：`abs_cancel` v0.2 没有超时令牌，所以本 crate 自带一个
+  `TimeoutToken`（一条线程 + `oneshot`，`cancellation()` 返回的 future 只轮询）。
+  它是"到点就取消"的通用件，将来 `abs_cancel` 若提供同样的东西，可以整体替换。
+  **`local-launch` 取消时会把已经起来的子进程收掉**——复用 `kb_core_starter` 的守卫。
+
+### 11.3 FRB 这一层：同步函数 + `block_on`（**重要取舍**）
+
+`kb_client_conn_mgr` 的接口是异步的，但 `rust/src/api/kb.rs` 里的 FFI 函数刻意写成
+**同步函数**（内部 `futures_lite::future::block_on`），原因是：
+
+- flutter_rust_bridge **2.13** 为 `async fn` 生成的 `wrap_async` 代码在本机
+  nightly（2026-09-04）上**编译不过**：`error: lifetime bound not satisfied`
+  （rust-lang/rust#100013 的 HRTB 限制）。3 个 async 函数全部命中；
+- 不写 `#[frb(sync)]` 的普通函数由 FRB 放到它自己的**工作线程池**上执行，
+  Dart 侧拿到的仍然是 `Future`，所以界面不会被阻塞；
+- 于是"异步"只发生在 Rust 内部：`block_on` 驱动的是与运行时无关的 future，
+  真正会阻塞的等待本来就已经在专职线程上了。
+
+**Dart 侧的 API 形状不受影响**（全是 `Future<...>`），等 FRB 与本机 nightly 兼容
+之后可以把这一层改回 `async fn`，界面不用动。
+
+### 11.4 Dart 侧拿到的接口
+
+`lib/src/rust/api/kb.dart`（由 `flutter_rust_bridge_codegen generate` 生成）：
+
+| 函数 | 用途 |
+| :--- | :--- |
+| `configFilePath` / `loadConfig` / `saveConfig` | 读 / 写连接配置；`exists == false` 即**首次运行** |
+| `connectionKinds` / `connectionKindDescription` | 下拉框的选项与说明 |
+| `suggestedLocalConnection` | 首次运行的预填值（`kb-core` 路径多半要用户自己选） |
+| `connectTo` / `disconnect` / `connectionState` | 连接、断开、当前连的是谁 |
+| `listWorkspaces` / `listSessions` | 连接之后的查询 |
+
+**视图刻意扁平**：`ConnectionView` / `ConfigView` / `ConnectReport` / `WorkspaceView` /
+`SessionView` 的字段只有 `String` / 整数 / `bool` / `Vec<扁平视图>`，错误用
+`ok: bool` + `error: String` 表达。理由见 §3.5 的实测：直接持有跨 crate 类型的
+结构体会被 FRB 退化成 opaque 句柄。实测结果：这 8 个类型全部生成成普通 Dart 类。
+
+### 11.5 验证
+
+- `cargo test -p kb_client_config`：9 单元 + 1 文档；
+- `cargo test -p kb_client_conn_mgr`：2 单元（超时令牌）+ 5 集成（**假网关**：正常往返、
+  业务错误透传、取消、坏帧判死、不可取消路径）+ 1 文档；
+- `cargo test -p kb_core_rproxy_wire` + `-p kb_core_rproxy`：6 + 6；
+- `cargo test --workspace`：26 个测试二进制通过，仍只有 §9.3 提到的那 **2 个既有失败**；
+- **真进程端到端**（`cargo run -p kb_client_conn_mgr --example connect -- …`）三种方式都跑通：
+  - `launch`：起真 `kb-core` → IPC → 握手（服务端 0.1.0 / 协议 v1）→ 列工作区；客户端退出后子进程被结束；
+  - `attach`：连已在跑的真 `kb-core` → 同样握手与列工作区；
+  - `tcp`：起真 `kb-core-rproxy` → 经 TCP 握手 → 列出**先用 `kb-core` 子命令建好的**
+    工作区与会话（`笔记` / `第一问`）；
+- 客户端 rust 侧：`cargo check` 通过；`flutter_rust_bridge_codegen generate` 重生成绑定；
+  `flutter analyze` **No issues found**。
+
+> 环境提醒：本机沙箱**每次 bash 调用都有独立的 `/tmp`**，而 ipc-channel 的端点
+> socket 放在 `/tmp` 下。所以"服务端与客户端跨两次调用"时，本机 IPC 一定连不上
+> （表现是"等待服务端端点超时"），必须在**同一个 bash 调用**里起服务端再连。
+> 这是沙箱现象，不是代码问题——上面的 attach / tcp 端到端就是这么跑的。
+
+### 11.6 还没做 / 下一轮
+
+- **Dart 界面**：首次运行的"选择或填写连接方式"对话框、连接状态、把工作区 / 会话
+  列表接到现有界面上（现在是本地 `shared_preferences` 的那一套）；
+- 配置里的时限目前只有 Rust 侧在用；界面要不要给用户改，等界面做出来再定；
+- 远程连接的鉴权仍是**没有**（见 §3.7），界面文案要明确"仅受信网络"。
+
+---
+
+## 12. crate 改名与归位（2026-09-18 14:10）
+
+### 12.1 `kb_core_client` → `kb_client_conn_mgr`
+
+连接管理器改名。这不是"内部换个名字"：它是**对外的 crate 名**，所以凡是写它的地方
+都要跟着改——受影响的有 13 个文件：
+
+- 代码：包名（`Cargo.toml`）、`use kb_core_client::…`（客户端 rust 侧、示例、集成测试）、
+  模块文档与 crate 文档标题；
+- 清单：根 `Cargo.toml` 的成员路径、`kb_admin_desktop/rust/Cargo.toml` 的依赖键与 path；
+- 文档：根 `README.md`、三个 README、两份 dev-note、以及 `dev-notes` 的落位表。
+
+顺带确认了一件对 FRB 重要的事：**改名没有动任何 FFI 可见的符号**
+（`connect_to` / `list_workspaces` / … 都在 `crate::api::kb` 里），所以生成的绑定
+不需要重新生成——`cargo check` 依旧通过。
+
+### 12.2 三个 crate 搬到 `kb_plugins/crates/`
+
+| crate | 从 | 到 | 为什么 |
+| :--- | :--- | :--- | :--- |
+| `kb_core_starter` | `kb_svc/crates/` | `kb_plugins/crates/` | 它是"围着 `kb_core` 转的配套进程逻辑" |
+| `kb_svc_servo_ipc` | `kb_svc/crates/` | `kb_plugins/crates/` | 它是协议的一种**传输实现**，不是协议本身 |
+| `kb_core_rproxy_wire` | `kb_svc/crates/` | `kb_plugins/crates/` | 它是网关的线格式，与网关同处 |
+
+**新的分组口径**（取代 §9.2 的修订、以及 §11.1 里"和协议同组"的说法）：
+
+```text
+kb_svc/crates/      协议 + 主进程本身
+                    abs_kb_core_handshake / abs_kb_svc / abs_kb_svc_v1_desktop
+                    abs_llm / kb_core
+kb_plugins/crates/  围着 kb_core 转的东西：网关、启动器、本机传输、LLM 插件
+kb_clients/crates/  界面之外的客户端逻辑
+```
+
+搬迁的机械面：根 `Cargo.toml` 的成员分组、5 个 crate 的 path 依赖
+（`kb_core` → `../../../kb_plugins/…`；rproxy → `../kb_core_starter` 等）、
+以及所有文档里的路径与相对链接。相对链接最容易漏：`kb_plugins/crates/x` 与
+`kb_svc/crates/x` 到同一目标的相对深度不同，改完都逐条核对过目标存在。
+
+### 12.3 验证
+
+- `cargo metadata` 能加载（说明成员与 path 依赖都自洽）；
+- `cargo check --workspace --all-targets` 通过；除既有告警外无新增；
+- 受影响 crate 的测试全绿：`kb_client_conn_mgr` 2+5+1、`kb_core_rproxy_wire` 6、
+  `kb_core_starter` 2+7+3、`kb_svc_servo_ipc` 4+7+3、`kb_core_rproxy` 6+1；
+- 客户端 rust 侧 `cargo check` 通过（改名后依赖键与 path 都换掉了）。

@@ -11,7 +11,7 @@
 
 1. **启动**一个 `kb_core` 子进程（`--handshake-prompt=stdio`），读它公布的那一行
    通知，**记录 IPC 端点文件名**——这是**系统层握手**。这一段由
-   [`kb_core_starter`](../../../kb_svc/crates/kb_core_starter/) 提供
+   [`kb_core_starter`](../kb_core_starter/) 提供
    （它原来长在本 crate 里，现在作为服务侧基础设施独立成可复用的 crate：
    桌面客户端要起本机 `kb_core` 时用的是同一段代码）；
 2. 连上 `kb_core`（`kb_svc_servo_ipc::Client`）；
@@ -109,4 +109,4 @@ TCP 读半 ──► buffex::circular_buff（64 KiB 有界）──► 帧解码
 - `dev-notes/kb_core_rproxy-20260917-1749.md`：可行性研究与已拍板的决定；
 - `abs_kb_core_handshake/README.md`：系统层握手（`IpcReadyNotice`）；
 - `abs_kb_svc_v1_desktop/src/handshake_.rs`：两个层面握手的完整说明；
-- `kb_svc/crates/kb_svc_servo_ipc/README`（crate 文档）：本机 IPC 的引导机制。
+- `kb_svc_servo_ipc`（crate 文档）：本机 IPC 的引导机制。

@@ -3,7 +3,7 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
-import 'api/simple.dart';
+import 'api/kb.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -57,9 +57,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
       RustLibWire.fromExternalLibrary;
 
   @override
-  Future<void> executeRustInitializers() async {
-    await api.crateApiSimpleInitApp();
-  }
+  Future<void> executeRustInitializers() async {}
 
   @override
   ExternalLibraryLoaderConfig get defaultExternalLibraryLoaderConfig =>
@@ -69,7 +67,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -1918914929;
+  int get rustContentHash => 323047148;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -81,9 +79,48 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
-  String crateApiSimpleGreet({required String name});
+  Future<String> crateApiKbConfigFilePath();
 
-  Future<void> crateApiSimpleInitApp();
+  Future<ConfigView> crateApiKbConfigViewDefault();
+
+  Future<ConnectReport> crateApiKbConnectReportDefault();
+
+  Future<ConnectReport> crateApiKbConnectTo({required ConnectionView profile});
+
+  Future<String> crateApiKbConnectionKindDescription({required String kind});
+
+  Future<List<String>> crateApiKbConnectionKinds();
+
+  Future<ConnectionState> crateApiKbConnectionState();
+
+  Future<ConnectionState> crateApiKbConnectionStateDefault();
+
+  Future<ConnectionView> crateApiKbConnectionViewDefault();
+
+  Future<void> crateApiKbDisconnect();
+
+  Future<SessionsReport> crateApiKbListSessions({required String workspaceId});
+
+  Future<WorkspacesReport> crateApiKbListWorkspaces();
+
+  Future<ConfigView> crateApiKbLoadConfig();
+
+  Future<String> crateApiKbSaveConfig({
+    required String defaultName,
+    required List<ConnectionView> connections,
+  });
+
+  Future<SessionView> crateApiKbSessionViewDefault();
+
+  Future<SessionsReport> crateApiKbSessionsReportDefault();
+
+  Future<ConnectionView> crateApiKbSuggestedLocalConnection({
+    required String name,
+  });
+
+  Future<WorkspaceView> crateApiKbWorkspaceViewDefault();
+
+  Future<WorkspacesReport> crateApiKbWorkspacesReportDefault();
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -95,30 +132,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
-  String crateApiSimpleGreet({required String name}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
+  Future<String> crateApiKbConfigFilePath() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_String(name, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 1,
+            port: port_,
+          );
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
           decodeErrorData: null,
         ),
-        constMeta: kCrateApiSimpleGreetConstMeta,
-        argValues: [name],
+        constMeta: kCrateApiKbConfigFilePathConstMeta,
+        argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleGreetConstMeta =>
-      const TaskConstMeta(debugName: "greet", argNames: ["name"]);
+  TaskConstMeta get kCrateApiKbConfigFilePathConstMeta =>
+      const TaskConstMeta(debugName: "config_file_path", argNames: []);
 
   @override
-  Future<void> crateApiSimpleInitApp() {
+  Future<ConfigView> crateApiKbConfigViewDefault() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -131,18 +172,498 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
+          decodeSuccessData: sse_decode_config_view,
           decodeErrorData: null,
         ),
-        constMeta: kCrateApiSimpleInitAppConstMeta,
+        constMeta: kCrateApiKbConfigViewDefaultConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleInitAppConstMeta =>
-      const TaskConstMeta(debugName: "init_app", argNames: []);
+  TaskConstMeta get kCrateApiKbConfigViewDefaultConstMeta =>
+      const TaskConstMeta(debugName: "config_view_default", argNames: []);
+
+  @override
+  Future<ConnectReport> crateApiKbConnectReportDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 3,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_connect_report,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbConnectReportDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbConnectReportDefaultConstMeta =>
+      const TaskConstMeta(debugName: "connect_report_default", argNames: []);
+
+  @override
+  Future<ConnectReport> crateApiKbConnectTo({required ConnectionView profile}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_box_autoadd_connection_view(profile, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 4,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_connect_report,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbConnectToConstMeta,
+        argValues: [profile],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbConnectToConstMeta =>
+      const TaskConstMeta(debugName: "connect_to", argNames: ["profile"]);
+
+  @override
+  Future<String> crateApiKbConnectionKindDescription({required String kind}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(kind, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 5,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbConnectionKindDescriptionConstMeta,
+        argValues: [kind],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbConnectionKindDescriptionConstMeta =>
+      const TaskConstMeta(
+        debugName: "connection_kind_description",
+        argNames: ["kind"],
+      );
+
+  @override
+  Future<List<String>> crateApiKbConnectionKinds() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbConnectionKindsConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbConnectionKindsConstMeta =>
+      const TaskConstMeta(debugName: "connection_kinds", argNames: []);
+
+  @override
+  Future<ConnectionState> crateApiKbConnectionState() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 7,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_connection_state,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbConnectionStateConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbConnectionStateConstMeta =>
+      const TaskConstMeta(debugName: "connection_state", argNames: []);
+
+  @override
+  Future<ConnectionState> crateApiKbConnectionStateDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 8,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_connection_state,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbConnectionStateDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbConnectionStateDefaultConstMeta =>
+      const TaskConstMeta(debugName: "connection_state_default", argNames: []);
+
+  @override
+  Future<ConnectionView> crateApiKbConnectionViewDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 9,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_connection_view,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbConnectionViewDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbConnectionViewDefaultConstMeta =>
+      const TaskConstMeta(debugName: "connection_view_default", argNames: []);
+
+  @override
+  Future<void> crateApiKbDisconnect() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 10,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbDisconnectConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbDisconnectConstMeta =>
+      const TaskConstMeta(debugName: "disconnect", argNames: []);
+
+  @override
+  Future<SessionsReport> crateApiKbListSessions({required String workspaceId}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(workspaceId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 11,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_sessions_report,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbListSessionsConstMeta,
+        argValues: [workspaceId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbListSessionsConstMeta => const TaskConstMeta(
+    debugName: "list_sessions",
+    argNames: ["workspaceId"],
+  );
+
+  @override
+  Future<WorkspacesReport> crateApiKbListWorkspaces() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 12,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_workspaces_report,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbListWorkspacesConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbListWorkspacesConstMeta =>
+      const TaskConstMeta(debugName: "list_workspaces", argNames: []);
+
+  @override
+  Future<ConfigView> crateApiKbLoadConfig() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 13,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_config_view,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbLoadConfigConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbLoadConfigConstMeta =>
+      const TaskConstMeta(debugName: "load_config", argNames: []);
+
+  @override
+  Future<String> crateApiKbSaveConfig({
+    required String defaultName,
+    required List<ConnectionView> connections,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(defaultName, serializer);
+          sse_encode_list_connection_view(connections, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 14,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbSaveConfigConstMeta,
+        argValues: [defaultName, connections],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbSaveConfigConstMeta => const TaskConstMeta(
+    debugName: "save_config",
+    argNames: ["defaultName", "connections"],
+  );
+
+  @override
+  Future<SessionView> crateApiKbSessionViewDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 15,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_session_view,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbSessionViewDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbSessionViewDefaultConstMeta =>
+      const TaskConstMeta(debugName: "session_view_default", argNames: []);
+
+  @override
+  Future<SessionsReport> crateApiKbSessionsReportDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 16,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_sessions_report,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbSessionsReportDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbSessionsReportDefaultConstMeta =>
+      const TaskConstMeta(debugName: "sessions_report_default", argNames: []);
+
+  @override
+  Future<ConnectionView> crateApiKbSuggestedLocalConnection({
+    required String name,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(name, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 17,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_connection_view,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbSuggestedLocalConnectionConstMeta,
+        argValues: [name],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbSuggestedLocalConnectionConstMeta =>
+      const TaskConstMeta(
+        debugName: "suggested_local_connection",
+        argNames: ["name"],
+      );
+
+  @override
+  Future<WorkspaceView> crateApiKbWorkspaceViewDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 18,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_workspace_view,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbWorkspaceViewDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbWorkspaceViewDefaultConstMeta =>
+      const TaskConstMeta(debugName: "workspace_view_default", argNames: []);
+
+  @override
+  Future<WorkspacesReport> crateApiKbWorkspacesReportDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 19,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_workspaces_report,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbWorkspacesReportDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbWorkspacesReportDefaultConstMeta =>
+      const TaskConstMeta(debugName: "workspaces_report_default", argNames: []);
 
   @protected
   String dco_decode_String(dynamic raw) {
@@ -151,9 +672,148 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool dco_decode_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
+  ConnectionView dco_decode_box_autoadd_connection_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_connection_view(raw);
+  }
+
+  @protected
+  ConfigView dco_decode_config_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return ConfigView(
+      path: dco_decode_String(arr[0]),
+      exists: dco_decode_bool(arr[1]),
+      defaultName: dco_decode_String(arr[2]),
+      connections: dco_decode_list_connection_view(arr[3]),
+      error: dco_decode_String(arr[4]),
+    );
+  }
+
+  @protected
+  ConnectReport dco_decode_connect_report(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return ConnectReport(
+      ok: dco_decode_bool(arr[0]),
+      profileName: dco_decode_String(arr[1]),
+      serverVersion: dco_decode_String(arr[2]),
+      protocolVersion: dco_decode_u_32(arr[3]),
+      isLocal: dco_decode_bool(arr[4]),
+      launchedPid: dco_decode_u_32(arr[5]),
+      error: dco_decode_String(arr[6]),
+    );
+  }
+
+  @protected
+  ConnectionState dco_decode_connection_state(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return ConnectionState(
+      connected: dco_decode_bool(arr[0]),
+      profileName: dco_decode_String(arr[1]),
+      serverVersion: dco_decode_String(arr[2]),
+      launchedPid: dco_decode_u_32(arr[3]),
+    );
+  }
+
+  @protected
+  ConnectionView dco_decode_connection_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return ConnectionView(
+      name: dco_decode_String(arr[0]),
+      kind: dco_decode_String(arr[1]),
+      summary: dco_decode_String(arr[2]),
+      kbCore: dco_decode_String(arr[3]),
+      runtimeDir: dco_decode_String(arr[4]),
+      storageDir: dco_decode_String(arr[5]),
+      address: dco_decode_String(arr[6]),
+    );
+  }
+
+  @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dcoDecodeI64(raw);
+  }
+
+  @protected
+  List<String> dco_decode_list_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_String).toList();
+  }
+
+  @protected
+  List<ConnectionView> dco_decode_list_connection_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_connection_view).toList();
+  }
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
+  }
+
+  @protected
+  List<SessionView> dco_decode_list_session_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_session_view).toList();
+  }
+
+  @protected
+  List<WorkspaceView> dco_decode_list_workspace_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_workspace_view).toList();
+  }
+
+  @protected
+  SessionView dco_decode_session_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return SessionView(
+      id: dco_decode_String(arr[0]),
+      workspaceId: dco_decode_String(arr[1]),
+      title: dco_decode_String(arr[2]),
+      updatedAtMillis: dco_decode_i_64(arr[3]),
+      turnCount: dco_decode_u_32(arr[4]),
+    );
+  }
+
+  @protected
+  SessionsReport dco_decode_sessions_report(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return SessionsReport(
+      ok: dco_decode_bool(arr[0]),
+      sessions: dco_decode_list_session_view(arr[1]),
+      error: dco_decode_String(arr[2]),
+    );
+  }
+
+  @protected
+  int dco_decode_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
   }
 
   @protected
@@ -169,6 +829,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  WorkspaceView dco_decode_workspace_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return WorkspaceView(
+      id: dco_decode_String(arr[0]),
+      name: dco_decode_String(arr[1]),
+      path: dco_decode_String(arr[2]),
+    );
+  }
+
+  @protected
+  WorkspacesReport dco_decode_workspaces_report(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return WorkspacesReport(
+      ok: dco_decode_bool(arr[0]),
+      workspaces: dco_decode_list_workspace_view(arr[1]),
+      error: dco_decode_String(arr[2]),
+    );
+  }
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_list_prim_u_8_strict(deserializer);
@@ -176,10 +862,188 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool sse_decode_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  ConnectionView sse_decode_box_autoadd_connection_view(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_connection_view(deserializer));
+  }
+
+  @protected
+  ConfigView sse_decode_config_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_path = sse_decode_String(deserializer);
+    var var_exists = sse_decode_bool(deserializer);
+    var var_defaultName = sse_decode_String(deserializer);
+    var var_connections = sse_decode_list_connection_view(deserializer);
+    var var_error = sse_decode_String(deserializer);
+    return ConfigView(
+      path: var_path,
+      exists: var_exists,
+      defaultName: var_defaultName,
+      connections: var_connections,
+      error: var_error,
+    );
+  }
+
+  @protected
+  ConnectReport sse_decode_connect_report(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_ok = sse_decode_bool(deserializer);
+    var var_profileName = sse_decode_String(deserializer);
+    var var_serverVersion = sse_decode_String(deserializer);
+    var var_protocolVersion = sse_decode_u_32(deserializer);
+    var var_isLocal = sse_decode_bool(deserializer);
+    var var_launchedPid = sse_decode_u_32(deserializer);
+    var var_error = sse_decode_String(deserializer);
+    return ConnectReport(
+      ok: var_ok,
+      profileName: var_profileName,
+      serverVersion: var_serverVersion,
+      protocolVersion: var_protocolVersion,
+      isLocal: var_isLocal,
+      launchedPid: var_launchedPid,
+      error: var_error,
+    );
+  }
+
+  @protected
+  ConnectionState sse_decode_connection_state(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_connected = sse_decode_bool(deserializer);
+    var var_profileName = sse_decode_String(deserializer);
+    var var_serverVersion = sse_decode_String(deserializer);
+    var var_launchedPid = sse_decode_u_32(deserializer);
+    return ConnectionState(
+      connected: var_connected,
+      profileName: var_profileName,
+      serverVersion: var_serverVersion,
+      launchedPid: var_launchedPid,
+    );
+  }
+
+  @protected
+  ConnectionView sse_decode_connection_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_name = sse_decode_String(deserializer);
+    var var_kind = sse_decode_String(deserializer);
+    var var_summary = sse_decode_String(deserializer);
+    var var_kbCore = sse_decode_String(deserializer);
+    var var_runtimeDir = sse_decode_String(deserializer);
+    var var_storageDir = sse_decode_String(deserializer);
+    var var_address = sse_decode_String(deserializer);
+    return ConnectionView(
+      name: var_name,
+      kind: var_kind,
+      summary: var_summary,
+      kbCore: var_kbCore,
+      runtimeDir: var_runtimeDir,
+      storageDir: var_storageDir,
+      address: var_address,
+    );
+  }
+
+  @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getPlatformInt64();
+  }
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <String>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<ConnectionView> sse_decode_list_connection_view(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ConnectionView>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_connection_view(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
+  List<SessionView> sse_decode_list_session_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <SessionView>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_session_view(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<WorkspaceView> sse_decode_list_workspace_view(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <WorkspaceView>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_workspace_view(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  SessionView sse_decode_session_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_workspaceId = sse_decode_String(deserializer);
+    var var_title = sse_decode_String(deserializer);
+    var var_updatedAtMillis = sse_decode_i_64(deserializer);
+    var var_turnCount = sse_decode_u_32(deserializer);
+    return SessionView(
+      id: var_id,
+      workspaceId: var_workspaceId,
+      title: var_title,
+      updatedAtMillis: var_updatedAtMillis,
+      turnCount: var_turnCount,
+    );
+  }
+
+  @protected
+  SessionsReport sse_decode_sessions_report(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_ok = sse_decode_bool(deserializer);
+    var var_sessions = sse_decode_list_session_view(deserializer);
+    var var_error = sse_decode_String(deserializer);
+    return SessionsReport(ok: var_ok, sessions: var_sessions, error: var_error);
+  }
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint32();
   }
 
   @protected
@@ -194,21 +1058,128 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  WorkspaceView sse_decode_workspace_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_name = sse_decode_String(deserializer);
+    var var_path = sse_decode_String(deserializer);
+    return WorkspaceView(id: var_id, name: var_name, path: var_path);
+  }
+
+  @protected
+  WorkspacesReport sse_decode_workspaces_report(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_ok = sse_decode_bool(deserializer);
+    var var_workspaces = sse_decode_list_workspace_view(deserializer);
+    var var_error = sse_decode_String(deserializer);
+    return WorkspacesReport(
+      ok: var_ok,
+      workspaces: var_workspaces,
+      error: var_error,
+    );
+  }
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getInt32();
   }
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getUint8() != 0;
-  }
-
-  @protected
   void sse_encode_String(String self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(utf8.encoder.convert(self), serializer);
+  }
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_connection_view(
+    ConnectionView self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_connection_view(self, serializer);
+  }
+
+  @protected
+  void sse_encode_config_view(ConfigView self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.path, serializer);
+    sse_encode_bool(self.exists, serializer);
+    sse_encode_String(self.defaultName, serializer);
+    sse_encode_list_connection_view(self.connections, serializer);
+    sse_encode_String(self.error, serializer);
+  }
+
+  @protected
+  void sse_encode_connect_report(ConnectReport self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.ok, serializer);
+    sse_encode_String(self.profileName, serializer);
+    sse_encode_String(self.serverVersion, serializer);
+    sse_encode_u_32(self.protocolVersion, serializer);
+    sse_encode_bool(self.isLocal, serializer);
+    sse_encode_u_32(self.launchedPid, serializer);
+    sse_encode_String(self.error, serializer);
+  }
+
+  @protected
+  void sse_encode_connection_state(
+    ConnectionState self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.connected, serializer);
+    sse_encode_String(self.profileName, serializer);
+    sse_encode_String(self.serverVersion, serializer);
+    sse_encode_u_32(self.launchedPid, serializer);
+  }
+
+  @protected
+  void sse_encode_connection_view(
+    ConnectionView self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.name, serializer);
+    sse_encode_String(self.kind, serializer);
+    sse_encode_String(self.summary, serializer);
+    sse_encode_String(self.kbCore, serializer);
+    sse_encode_String(self.runtimeDir, serializer);
+    sse_encode_String(self.storageDir, serializer);
+    sse_encode_String(self.address, serializer);
+  }
+
+  @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putPlatformInt64(self);
+  }
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_String(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_connection_view(
+    List<ConnectionView> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_connection_view(item, serializer);
+    }
   }
 
   @protected
@@ -219,6 +1190,57 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putUint8List(self);
+  }
+
+  @protected
+  void sse_encode_list_session_view(
+    List<SessionView> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_session_view(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_workspace_view(
+    List<WorkspaceView> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_workspace_view(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_session_view(SessionView self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.id, serializer);
+    sse_encode_String(self.workspaceId, serializer);
+    sse_encode_String(self.title, serializer);
+    sse_encode_i_64(self.updatedAtMillis, serializer);
+    sse_encode_u_32(self.turnCount, serializer);
+  }
+
+  @protected
+  void sse_encode_sessions_report(
+    SessionsReport self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.ok, serializer);
+    sse_encode_list_session_view(self.sessions, serializer);
+    sse_encode_String(self.error, serializer);
+  }
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint32(self);
   }
 
   @protected
@@ -233,14 +1255,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_i_32(int self, SseSerializer serializer) {
+  void sse_encode_workspace_view(WorkspaceView self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putInt32(self);
+    sse_encode_String(self.id, serializer);
+    sse_encode_String(self.name, serializer);
+    sse_encode_String(self.path, serializer);
   }
 
   @protected
-  void sse_encode_bool(bool self, SseSerializer serializer) {
+  void sse_encode_workspaces_report(
+    WorkspacesReport self,
+    SseSerializer serializer,
+  ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putUint8(self ? 1 : 0);
+    sse_encode_bool(self.ok, serializer);
+    sse_encode_list_workspace_view(self.workspaces, serializer);
+    sse_encode_String(self.error, serializer);
+  }
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putInt32(self);
   }
 }

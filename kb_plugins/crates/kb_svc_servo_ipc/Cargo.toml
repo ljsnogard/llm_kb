@@ -13,7 +13,7 @@ abs_cancel = { workspace = true }
 gen_mcf2 = { workspace = true }
 
 # 业务通信抽象层：本 crate 是它选定的实现（协议数据 + 按域 RPC trait）。
-abs_kb_svc = { path = "../abs_kb_svc" }
+abs_kb_svc = { path = "../../../kb_svc/crates/abs_kb_svc" }
 
 # 上游的进程间 channel。`async` feature 提供 `IpcReceiver::to_stream()`——
 # 它把阻塞收敛到 ipc-channel 自己的进程级 router 线程，业务侧的 await 不阻塞。

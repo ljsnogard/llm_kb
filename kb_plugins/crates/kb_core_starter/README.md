@@ -7,8 +7,9 @@
        ◄──── stdout 上的一行 IpcReadyNotice（JSON）────────┘
 ```
 
-它是 `kb_core` 的配套启动逻辑，属于**服务侧基础设施**，因此放在 `kb_svc/crates/`
-（`kb_core_rproxy` 那种对外提供服务的网关才放 `kb_plugins/`）。
+它与 `kb_core_rproxy`、`kb_svc_servo_ipc` 一起放在 `kb_plugins/crates/`：
+按本仓库的分组，**"插件与配套进程"**这一类装的是"围着一个 `kb_core` 转"的东西
+（网关、启动器、传输实现），而 `kb_svc/crates/` 只留协议与主进程本身。
 
 ## 它实现协议里的哪一块
 
@@ -16,7 +17,7 @@
 
 | 层面 | 解决什么 | 消息 | 谁实现 |
 | :--- | :--- | :--- | :--- |
-| **系统层** | 找得到、连得上 | [`IpcReadyNotice`](../abs_kb_core_handshake/src/system_.rs)（`event: "ipc_ready"`，带 `ipc_name_file` / `protocol_version` / `pid`） | **本 crate 收**；`kb_core::serve_` 发 |
+| **系统层** | 找得到、连得上 | [`IpcReadyNotice`](../../../kb_svc/crates/abs_kb_core_handshake/src/system_.rs)（`event: "ipc_ready"`，带 `ipc_name_file` / `protocol_version` / `pid`） | **本 crate 收**；`kb_core::serve_` 发 |
 | **应用层** | 谈得成 | `Request::Hello` → `Reply::Hello` → `Event::Ready` | `kb_svc_servo_ipc::Client`（本机 IPC）/ 将来的 TCP 客户端 |
 
 所以本 crate **只实现系统层握手的接收侧**，具体是：
@@ -31,7 +32,7 @@
 - **"怎么连上端点"**：它只把名字文件交出去，连接由调用方用
   `kb_svc_servo_ipc::Client::connect(runtime_dir)`（或远程的 TCP 客户端）完成。
 
-系统层的消息类型在 [`abs_kb_core_handshake`](../abs_kb_core_handshake/) 而不在本 crate：
+系统层的消息类型在 [`abs_kb_core_handshake`](../../../kb_svc/crates/abs_kb_core_handshake/) 而不在本 crate：
 那是一份只依赖 `serde` 的纯协议 crate，谁都可以依赖它；而起进程、读管道这些
 `std::process` 的事不能进协议 crate。**本 crate 的依赖里只有这一个协议 crate**，
 没有 `abs_kb_svc` / `abs_kb_svc_v1_desktop`。
@@ -88,9 +89,9 @@ cargo test -p kb_core_starter
 
 ## 相关文档
 
-- [`abs_kb_core_handshake`](../abs_kb_core_handshake/README.md)：
+- [`abs_kb_core_handshake`](../../../kb_svc/crates/abs_kb_core_handshake/README.md)：
   两个层面握手各自解决什么、为什么分开；
-- [`kb_core_rproxy`](../../../kb_plugins/crates/kb_core_rproxy/README.md)：
+- [`kb_core_rproxy`](../kb_core_rproxy/README.md)：
   本 crate 的第一个调用方（网关）；
 - `dev-notes/kb_admin_desktop-20260918-1034.md` §9：
   为什么把它从 rproxy 里提取出来，以及"两个层次都算公开协议"这条决定的来龙去脉。

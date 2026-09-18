@@ -1,0 +1,92 @@
+# kb_client_conn_mgr
+
+`kb_admin_desktop` 的**连接管理器**：按一条连接方式把客户端接上 `kb_core`，
+然后暴露一组窄查询（列工作区 / 列会话）。
+
+```text
+读配置（kb_client_config）
+   └─ 首次运行：界面问用户怎么连 → 写配置
+连接（本 crate）
+   ├─ ① 系统层握手：起本机 kb_core / 附着到本机 kb_core / 连远程网关
+   └─ ② 应用层握手：Request::Hello → Reply::Hello
+查询
+   ├─ list_workspaces()
+   └─ list_sessions(workspace_id)
+```
+
+## 三种连接方式
+
+| `kind` | 系统层怎么走 | 说明 |
+| :--- | :--- | :--- |
+| `local-launch` | `kb_core_starter::start`（起子进程 + 读就绪通知），再连 IPC | 子进程由 `KbClient` 持有，**它被丢弃时子进程被结束** |
+| `local-attach` | 直接连已经在跑的本机 IPC | 服务端由别人（手工 / rproxy）拉起时用 |
+| `tcp` | 连 `kb_core_rproxy` 的 TCP 端口 | 跨机；**无鉴权、无 TLS，仅受信网络** |
+
+`connect` 把两种握手都走完才算"连上"；任何一步失败都返回 `ClientError`，
+并且不会留下半个连接。
+
+## 形状
+
+```rust
+let token = TimeoutToken::after(profile.handshake_timeout());
+let client = connect(profile).may_cancel_with(token).await?;
+
+let token = TimeoutToken::after(client.request_timeout());
+let workspaces = client.list_workspaces().may_cancel_with(token).await?;
+```
+
+- **不挑异步运行时**：所有公开异步入口都由 `gen_mcf2::gen_may_cancel_future`
+  展开成「不可取消 / 可取消」两条路径；future 里没有阻塞调用——阻塞的
+  `Client::connect`（本机 IPC，含重试）与 `TcpClient::connect`（TCP）都搬到
+  **专职线程**上，future 只轮询完成量 + 取消令牌；
+- **超时由调用方决定**：本 crate 不自带定时器，只提供
+  [`TimeoutToken`](src/timeout_.rs)（"到点就取消"，一条线程 + `oneshot`）。
+  等多久是策略，由界面按配置里的时限决定；
+- **取消之后子进程会被收掉**：`local-launch` 起出来的 `kb_core` 由
+  `kb_core_starter` 的守卫持有，取消、出错、future 被丢弃三条路径都会结束它。
+
+## 远程路径的传输
+
+`TcpClient` 与 `kb_svc_servo_ipc::Client` **刻意同构**：写线程发帧、读线程按
+`request_id` 把应答交给等待者、事件帧按种类分派（现在没人订阅，只记日志）。
+好处是这一个 crate 不依赖任何异步运行时的 `net` 模块，也不把 `ipc-channel`
+拖进远程路径。
+
+帧格式本身在 [`kb_core_rproxy_wire`](../../../kb_plugins/crates/kb_core_rproxy_wire/)，
+与网关**共用同一份编解码**。
+
+## 它不做什么
+
+- 不读配置文件（那是 `kb_client_config`）；
+- 不做界面（FRB 那一层再把结果翻成扁平 DTO）；
+- 不实现应用层的其它域（设置 / 目录 / 生成）——协议那边还没落地。
+
+## 验证
+
+```bash
+cargo test -p kb_client_conn_mgr
+```
+
+2 个单元测试（超时令牌）+ 5 个集成测试（假网关：正常往返、业务错误透传、
+取消、坏帧判死、不可取消路径）+ 1 个文档测试。
+
+真进程的端到端验证用附带的小 CLI：
+
+```bash
+# 本机·启动
+cargo run -p kb_client_conn_mgr --example connect -- launch ./target/debug/kb-core /tmp/kb/run /tmp/kb/data
+# 本机·附着（先手工起一个 kb-core）
+cargo run -p kb_client_conn_mgr --example connect -- attach /tmp/kb/run
+# 远程（先起 kb-core-rproxy）
+cargo run -p kb_client_conn_mgr --example connect -- tcp 127.0.0.1:8788
+```
+
+三种方式都实测跑通过：`local-launch` 起进程 → IPC → 握手 → 列工作区；
+`local-attach` 连已在跑的实例；`tcp` 经真 rproxy 列出了一个真工作区与会话。
+
+## 相关文档
+
+- [`kb_client_config`](../kb_client_config/README.md)：连接方式从哪来；
+- [`kb_core_starter`](../../../kb_plugins/crates/kb_core_starter/README.md)：系统层握手的本机那一半；
+- [`kb_core_rproxy_wire`](../../../kb_plugins/crates/kb_core_rproxy_wire/README.md)：远程那一半的帧格式；
+- `dev-notes/kb_admin_desktop-20260918-1034.md`：三种连接方式与配置的决策过程。

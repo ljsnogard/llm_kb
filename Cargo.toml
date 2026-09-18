@@ -11,13 +11,20 @@ members = [
     "kb_svc/crates/abs_kb_svc_v1_desktop",
     "kb_svc/crates/abs_llm",
     "kb_svc/crates/kb_core",
-    # 启动 `kb_core` 子进程并等它公布 IPC 端点文件名。它是 `kb_core` 的配套启动
-    # 逻辑（服务侧基础设施），rproxy 与桌面客户端的 Rust 侧共用。
-    "kb_svc/crates/kb_core_starter",
-    "kb_svc/crates/kb_svc_servo_ipc",
+
+    # 客户端侧基础设施（与 kb_clients/ 下的应用分开成 crates）
+    "kb_clients/crates/kb_client_config",
+    "kb_clients/crates/kb_client_conn_mgr",
 
     # 插件与配套进程
     "kb_plugins/crates/kb_core_rproxy",
+    # rproxy 的 TCP 帧格式：网关与远程客户端共用（原来只长在网关的 bin 里）。
+    "kb_plugins/crates/kb_core_rproxy_wire",
+    # 启动 `kb_core` 子进程并等它公布 IPC 端点文件名。rproxy 与桌面客户端的
+    # Rust 侧共用；它是"配套进程"这一类，因此和 rproxy 放在一起。
+    "kb_plugins/crates/kb_core_starter",
+    # 协议的本机传输实现：`kb_core` 是它的服务端，客户端是它的代理。
+    "kb_plugins/crates/kb_svc_servo_ipc",
     "kb_plugins/crates/kb_rig_llm_v1_adapt",
     "kb_plugins/crates/kb_rig_llm_v1_agent",
 ]

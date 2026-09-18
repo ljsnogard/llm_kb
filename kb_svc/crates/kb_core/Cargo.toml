@@ -17,7 +17,7 @@ gen_mcf2 = { workspace = true }
 abs_kb_svc = { path = "../abs_kb_svc" }
 
 # 进程间通信的落地实现：`kb_core` 是它的服务端。
-kb_svc_servo_ipc = { path = "../kb_svc_servo_ipc" }
+kb_svc_servo_ipc = { path = "../../../kb_plugins/crates/kb_svc_servo_ipc" }
 
 # 会话标题缺省时要从首条用户消息推导，因此需要 `Role` 等对话词汇。
 abs_llm = { path = "../abs_llm" }
