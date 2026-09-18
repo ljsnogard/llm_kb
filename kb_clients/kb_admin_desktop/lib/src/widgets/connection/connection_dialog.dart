@@ -114,7 +114,8 @@ class _ConnectionDialogState extends State<_ConnectionDialog> {
               ),
               const SizedBox(height: 6),
               Text(
-                '工作区与会话由 kb_core 保管；先告诉客户端怎么找到它。',
+                '工作区与会话由 kb_core 保管；先告诉客户端怎么找到它。\n'
+                '「主机名」只是客户端这边的花名，想怎么叫就怎么叫。',
                 style: DswTypography.caption.copyWith(color: c.labelTertiary),
               ),
               if (widget.connection.configPath.isNotEmpty) ...<Widget>[
@@ -141,7 +142,11 @@ class _ConnectionDialogState extends State<_ConnectionDialog> {
               const SizedBox(height: 16),
               _SectionLabel(widget.connection.profiles.isEmpty ? '连接方式' : '新增 / 编辑'),
               const SizedBox(height: 8),
-              DswLabeledField(label: '名字', controller: _name, hint: '例如：本机'),
+              DswLabeledField(
+                label: '主机名',
+                controller: _name,
+                hint: '例如：本机 / 实验室（自己起的花名）',
+              ),
               const SizedBox(height: 10),
               _KindPicker(
                 kinds: kinds,

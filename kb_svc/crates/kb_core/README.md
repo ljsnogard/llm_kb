@@ -6,8 +6,10 @@
 > 已有：命令行入口、compio 异步运行时、工作区与会话的**本地文件存储**、
 > **`kb_svc_servo_ipc` 服务端**（客户端连上来之后，请求经 IPC → 派发 →
 > 存储 → 应答原路返回），以及一组临时的增删查改子命令（不开客户端时手工检验用）。
-> 还没有：LLM 生成（`Ask` / 事件流）、设置、目录浏览那几个域——
-> 它们的 trait 尚未落地，服务端会明确回 `BadRequest`。
+> 生成域有一个**临时模拟的 LLM**：`Ask` 把问题逆序输出当回答，一问一答落盘
+> （见 §2 的 `ask_async`）；真正的 LLM 插件与流式事件还没接。
+> 还没有：设置、目录浏览那两个域——它们的 trait 尚未落地，服务端会明确回
+> `BadRequest`。
 >
 > 与上一版相比：**`kb_svc_salvo` 与 `tokio` 已从本 crate 移除**，
 > 随之删掉了 HTTP / WebSocket 监听、`--config`、`tcp_addr` 位置参数，
@@ -374,9 +376,11 @@ kb_admin_desktop / 测试客户端
 ## 5. 下一轮（尚未实现）
 
 1. **其余业务域**：设置（`ListServices` / `UpsertService`…）、
-   目录浏览（`ListDirectory`）、生成（`Ask` / `Cancel` + 事件流）。
-   它们的按域 trait 还没落地，服务端对它们明确回 `BadRequest`
-   （`Hello` 已经实现，见下）；
+   目录浏览（`ListDirectory`）。它们的按域 trait 还没落地，服务端对它们明确回
+   `BadRequest`（`Hello` 已经实现，见下）；
+   生成域已有临时的同步 `Ask`，**流式事件与 `Cancel`** 还没做——那需要先把
+   `TrGeneration` 的返回类型换成流形状（公开协议变更，见
+   `dev-notes/kb_admin_desktop-20260918-1740.md` §2.1）；
 2. **并发服务多个客户端**：当前一次只服务一个连接（上一个断开才回到 `accept`）。
    要并发就得把 `accept` 循环与 `serve` 拆到不同任务上，并处理端点的生命周期；
 3. **优雅退出**：当前依赖操作系统的默认信号处置；将来要显式撤下端点名字、

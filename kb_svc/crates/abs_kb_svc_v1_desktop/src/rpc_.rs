@@ -60,14 +60,20 @@
 //! 这条约定在真实使用中若显得别扭（例如界面需要区分"用户主动取消"与"连接断了"），
 //! 再考虑给 [`RpcError`] 增加第三个变体。
 //!
-//! # 尚未定义的部分
+//! # 现状与尚未定义的部分
 //!
-//! - [`TrGeneration`]（`Ask` / `Cancel`）与事件订阅：它们返回的是**流**而不是单个
-//!   future，形状要配合 `abs_async_iter::TrFlux` 定，见
+//! 已经定义：握手（[`TrHandshake`]）、工作区（[`TrWorkspaceService`]）、
+//! 会话（[`TrSessionService`]）、生成（[`TrGeneration`]，目前只有同步的
+//! [`TrGeneration::ask`]），以及把它们组合起来的 [`TrKbService`]。
+//!
+//! 尚未定义：
+//!
+//! - **流式生成与事件订阅**：`TrGeneration` 现在刻意是"一问一答"（形状与理由见
+//!   它的文档），真正的流形状要配合 `abs_async_iter::TrFlux` 定，见
 //!   `dev-notes/kb_svc_servo_ipc-20260917-1548.md` §3.4；
-//! - 设置（`TrSettingsService`）、目录（`TrDirectoryService`）、握手
-//!   （`TrHandshake`）以及把它们组合起来的 `TrKbService`：签名已在上面那份
-//!   dev-note 的 §3.4 列出，等 IPC 链路跑通后补。
+//! - **取消**（`Request::Cancel`）：它作用于正在进行的流，等流落地后一起定义；
+//! - 设置（`TrSettingsService`）与目录（`TrDirectoryService`）：签名已在上面那份
+//!   dev-note 的 §3.4 列出，等界面需要时再补。
 //!
 //! # 示例
 //!
@@ -82,7 +88,7 @@ use abs_llm::x_deps::abs_cancel;
 use super::error_::ErrorReply;
 use super::handshake_::{ClientInfo, ServerInfo};
 use super::ids_::{SessionId, WorkspaceId};
-use super::request_::{AddWorkspaceRequest, CreateSessionRequest};
+use super::request_::{AddWorkspaceRequest, AskRequest, CreateSessionRequest};
 use super::workspace_::{SessionDetail, SessionList, SessionSummary, Workspace, WorkspaceList};
 
 /// 所有按域 RPC trait 的公共基底。
@@ -259,6 +265,35 @@ pub trait TrSessionService: TrKbEndpoint {
     ) -> Self::RemoveSession<'f>;
 }
 
+/// **生成**域：提问（以及将来围绕一次生成的取消与事件订阅）。
+///
+/// 对应协议里的 `Request::Ask`。
+///
+/// # 为什么现在只有"一问一答"
+///
+/// 真正的生成是一条**流**（`TurnStarted` → 若干 `TextDelta` → `TurnFinished`），
+/// 它的 trait 形状要配合 `abs_async_iter::TrFlux` 定——那件事还没做。而在
+/// "把会话内容落盘、重连还能看到"这个验收目标下，流并不是必需的：`kb_core`
+/// 完全可以先**同步**答完、把两条消息写进会话，再把结果回给调用方。
+///
+/// 于是 [`TrGeneration::ask`] 暂时返回 [`SessionDetail`]（提问之后的完整会话），
+/// 派发层把它编码成 [`Reply::SessionDetail`](crate::Reply::SessionDetail)。
+/// 协议里没有专门的 `Ask` 应答变体，而在同步阶段 `SessionDetail` 正好就是调用方
+/// 要的东西（两条新消息 + 最新摘要）。等事件流落地后，这里的返回类型会换成流形状，
+/// 界面改走订阅——**那是一次公开协议变更，需要先拍板**。
+pub trait TrGeneration: TrKbEndpoint {
+    /// [`TrGeneration::ask`] 返回的可取消 future。
+    type Ask<'f>: TrMayCancel<'f, MayCancelOutput = Result<SessionDetail, RpcError<Self::Error>>>
+    where
+        Self: 'f;
+
+    /// 就某个会话提问。
+    ///
+    /// 服务端负责把这一问一答记进会话（谁生成回答、要不要产生工具调用，都由实现
+    /// 决定）；调用方拿到的是**提问之后**的会话内容。
+    fn ask<'f>(&'f self, request: AskRequest) -> Self::Ask<'f>;
+}
+
 /// **应用层握手**域：协议要求的第一条请求。
 ///
 /// 对应协议里的 `Request::Hello` / `Reply::Hello`。它与"系统层握手"的区别见
@@ -284,8 +319,13 @@ pub trait TrHandshake: TrKbEndpoint {
 /// 代理都实现它，服务端派发层则只要求这一个约束。
 ///
 /// 有一个 blanket 实现，因此实现方只要把各个按域 trait 实现了，就自动满足它。
-/// 随着域的增加（设置 / 目录 / 生成 / 事件订阅），这里跟着加父 trait 即可。
-pub trait TrKbService: TrKbEndpoint + TrHandshake + TrWorkspaceService + TrSessionService {}
+/// 随着域的增加（设置 / 目录 / 事件订阅），这里跟着加父 trait 即可。
+pub trait TrKbService:
+    TrKbEndpoint + TrHandshake + TrWorkspaceService + TrSessionService + TrGeneration
+{
+}
 
-impl<T> TrKbService for T where T: TrKbEndpoint + TrHandshake + TrWorkspaceService + TrSessionService
-{}
+impl<T> TrKbService for T where
+    T: TrKbEndpoint + TrHandshake + TrWorkspaceService + TrSessionService + TrGeneration
+{
+}

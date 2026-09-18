@@ -150,7 +150,7 @@ void main() {
   /// 测试发送一条消息会写入会话并渲染出用户气泡。
   /// - 手段：先建一个工作区与会话，在输入框里输入文字后按 Enter。
   /// - 判断：会话里多出「用户消息 + 说明性助手消息」两条，界面上出现用户气泡
-  ///   与「对话通道尚未接入」的提示。
+  ///   与「还没有连接 kb_core」的提示（未连接时消息只留在本地）。
   testWidgets('Enter 发送消息并渲染用户气泡', (WidgetTester tester) async {
     _useWideWindow(tester);
     final AppController controller = await _controller();
@@ -174,7 +174,7 @@ void main() {
     expect(controller.activeSession?.turns.first.text, '你好');
     // 「你好」会同时出现在侧边栏会话标题与面包屑里，所以这里只要求至少一处。
     expect(find.text('你好'), findsWidgets);
-    expect(find.textContaining('对话通道尚未接入'), findsOneWidget);
+    expect(find.textContaining('还没有连接 kb_core'), findsOneWidget);
 
     // 工作区落盘有 500ms 防抖，必须让它跑完，否则测试结束时会报「仍有挂起的 Timer」。
     await tester.pump(const Duration(milliseconds: 600));

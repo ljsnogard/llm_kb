@@ -27,8 +27,9 @@ use std::time::Duration;
 
 use abs_cancel::{TrCancellationToken, TrMayCancel};
 use abs_kb_svc_v1_desktop::{
-    ClientInfo, PROTOCOL_VERSION, Reply, Request, RequestEnvelope, RequestId, ServerInfo,
-    SessionList, TrHandshake, WorkspaceId, WorkspaceList,
+    AddWorkspaceRequest, AskRequest, ClientInfo, CreateSessionRequest, PROTOCOL_VERSION, Reply,
+    Request, RequestEnvelope, RequestId, ServerInfo, SessionDetail, SessionId, SessionList,
+    SessionSummary, TrHandshake, Workspace, WorkspaceId, WorkspaceList,
 };
 use futures_channel::oneshot;
 use gen_mcf2::gen_may_cancel_future;
@@ -232,6 +233,60 @@ impl KbClient {
         ListSessionsAsync::new(self, workspace_id)
     }
 
+    /// 新建（登记）一个工作区，标识由 `kb_core` 分配。
+    ///
+    /// `request.path` 是 **`kb_core` 所在主机上**的目录：客户端的本地文件系统
+    /// 不参与这次操作，本 crate 只把名字与路径原样提交给服务端。
+    pub fn add_workspace<'f>(&'f self, request: AddWorkspaceRequest) -> AddWorkspaceAsync<'f, 'f> {
+        AddWorkspaceAsync::new(self, request)
+    }
+
+    /// 删除一个工作区；服务端会**级联删除**它名下的会话。
+    pub fn remove_workspace<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+    ) -> RemoveWorkspaceAsync<'f, 'f> {
+        RemoveWorkspaceAsync::new(self, workspace_id)
+    }
+
+    /// 在某个工作区下新建一个会话，标识由 `kb_core` 分配。
+    ///
+    /// [`CreateSessionRequest::turns`] 是客户端离线期间攒下的历史，连上之后新建
+    /// 通常为空；留空时标题由服务端从标题或首条用户消息推导。
+    pub fn create_session<'f>(
+        &'f self,
+        request: CreateSessionRequest,
+    ) -> CreateSessionAsync<'f, 'f> {
+        CreateSessionAsync::new(self, request)
+    }
+
+    /// 删除一个会话。
+    pub fn remove_session<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> RemoveSessionAsync<'f, 'f> {
+        RemoveSessionAsync::new(self, workspace_id, session_id)
+    }
+
+    /// 读取一个会话的完整内容（摘要 + 全部消息）。
+    pub fn get_session<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> GetSessionAsync<'f, 'f> {
+        GetSessionAsync::new(self, workspace_id, session_id)
+    }
+
+    /// 就某个会话提问，回来后拿到**提问之后**的会话内容。
+    ///
+    /// 现在是同步一问一答（详见 `abs_kb_svc_v1_desktop::TrGeneration` 的文档）：
+    /// `kb_core` 里那个临时模拟的 LLM 会把问题逆序输出并落盘，因此这里的返回值
+    /// 已经带着两条新消息。等流式生成落地后，这个入口会改成订阅事件。
+    pub fn ask<'f>(&'f self, request: AskRequest) -> AskAsync<'f, 'f> {
+        AskAsync::new(self, request)
+    }
+
     /// 发一个请求并等它的应答（内部实现，两个传输共用）。
     async fn request_<C>(&self, request: Request, cancel: C) -> Result<Reply, ClientError>
     where
@@ -310,6 +365,161 @@ where
         Reply::Error(error) => Err(ClientError::Business(error)),
         other => Err(ClientError::UnexpectedReply {
             expected: "SessionList",
+            got: reply_kind_(&other),
+        }),
+    }
+}
+
+/// [`KbClient::add_workspace`] 的实现体。
+#[gen_may_cancel_future(AddWorkspace, pub)]
+async fn add_workspace_async<'c, C>(
+    client: &'c KbClient,
+    request: AddWorkspaceRequest,
+    cancel: C,
+) -> Result<Workspace, ClientError>
+where
+    C: TrCancellationToken,
+{
+    match client
+        .request_(Request::AddWorkspace(request), cancel)
+        .await?
+    {
+        // `local_id` 是调用方的簿记字段：线上应答仍然带着它往返一次，但这里
+        // 只回服务端分配好的工作区（调用方本来就知道自己发的是哪一个）。
+        Reply::WorkspaceAdded { workspace, .. } => Ok(workspace),
+        Reply::Error(error) => Err(ClientError::Business(error)),
+        other => Err(ClientError::UnexpectedReply {
+            expected: "WorkspaceAdded",
+            got: reply_kind_(&other),
+        }),
+    }
+}
+
+/// [`KbClient::remove_workspace`] 的实现体。
+#[gen_may_cancel_future(RemoveWorkspace, pub)]
+async fn remove_workspace_async<'c, C>(
+    client: &'c KbClient,
+    workspace_id: WorkspaceId,
+    cancel: C,
+) -> Result<(), ClientError>
+where
+    C: TrCancellationToken,
+{
+    match client
+        .request_(Request::RemoveWorkspace { workspace_id }, cancel)
+        .await?
+    {
+        Reply::Ack => Ok(()),
+        Reply::Error(error) => Err(ClientError::Business(error)),
+        other => Err(ClientError::UnexpectedReply {
+            expected: "Ack",
+            got: reply_kind_(&other),
+        }),
+    }
+}
+
+/// [`KbClient::create_session`] 的实现体。
+#[gen_may_cancel_future(CreateSession, pub)]
+async fn create_session_async<'c, C>(
+    client: &'c KbClient,
+    request: CreateSessionRequest,
+    cancel: C,
+) -> Result<SessionSummary, ClientError>
+where
+    C: TrCancellationToken,
+{
+    match client
+        .request_(Request::CreateSession(request), cancel)
+        .await?
+    {
+        // 与 `add_workspace` 同理：`local_id` 不上抛。
+        Reply::SessionCreated { session, .. } => Ok(session),
+        Reply::Error(error) => Err(ClientError::Business(error)),
+        other => Err(ClientError::UnexpectedReply {
+            expected: "SessionCreated",
+            got: reply_kind_(&other),
+        }),
+    }
+}
+
+/// [`KbClient::remove_session`] 的实现体。
+#[gen_may_cancel_future(RemoveSession, pub)]
+async fn remove_session_async<'c, C>(
+    client: &'c KbClient,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    cancel: C,
+) -> Result<(), ClientError>
+where
+    C: TrCancellationToken,
+{
+    match client
+        .request_(
+            Request::RemoveSession {
+                workspace_id,
+                session_id,
+            },
+            cancel,
+        )
+        .await?
+    {
+        Reply::Ack => Ok(()),
+        Reply::Error(error) => Err(ClientError::Business(error)),
+        other => Err(ClientError::UnexpectedReply {
+            expected: "Ack",
+            got: reply_kind_(&other),
+        }),
+    }
+}
+
+/// [`KbClient::get_session`] 的实现体。
+#[gen_may_cancel_future(GetSession, pub)]
+async fn get_session_async<'c, C>(
+    client: &'c KbClient,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    cancel: C,
+) -> Result<SessionDetail, ClientError>
+where
+    C: TrCancellationToken,
+{
+    match client
+        .request_(
+            Request::GetSession {
+                workspace_id,
+                session_id,
+            },
+            cancel,
+        )
+        .await?
+    {
+        Reply::SessionDetail(detail) => Ok(detail),
+        Reply::Error(error) => Err(ClientError::Business(error)),
+        other => Err(ClientError::UnexpectedReply {
+            expected: "SessionDetail",
+            got: reply_kind_(&other),
+        }),
+    }
+}
+
+/// [`KbClient::ask`] 的实现体。
+///
+/// `Ask` 的应答复用 `Reply::SessionDetail`（同步一问一答阶段的形状，见
+/// [`TrGeneration`](abs_kb_svc_v1_desktop::TrGeneration) 的文档）。
+#[gen_may_cancel_future(Ask, pub)]
+async fn ask_async<'c, C>(
+    client: &'c KbClient,
+    request: AskRequest,
+    cancel: C,
+) -> Result<SessionDetail, ClientError>
+where
+    C: TrCancellationToken,
+{
+    match client.request_(Request::Ask(request), cancel).await? {
+        Reply::SessionDetail(detail) => Ok(detail),
+        Reply::Error(error) => Err(ClientError::Business(error)),
+        other => Err(ClientError::UnexpectedReply {
+            expected: "SessionDetail",
             got: reply_kind_(&other),
         }),
     }

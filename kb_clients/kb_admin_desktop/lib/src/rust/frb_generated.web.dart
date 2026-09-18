@@ -60,13 +60,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SessionView> dco_decode_list_session_view(dynamic raw);
 
   @protected
+  List<TurnView> dco_decode_list_turn_view(dynamic raw);
+
+  @protected
   List<WorkspaceView> dco_decode_list_workspace_view(dynamic raw);
+
+  @protected
+  OpReport dco_decode_op_report(dynamic raw);
+
+  @protected
+  SessionDetailReport dco_decode_session_detail_report(dynamic raw);
+
+  @protected
+  SessionReport dco_decode_session_report(dynamic raw);
 
   @protected
   SessionView dco_decode_session_view(dynamic raw);
 
   @protected
   SessionsReport dco_decode_sessions_report(dynamic raw);
+
+  @protected
+  TurnView dco_decode_turn_view(dynamic raw);
 
   @protected
   int dco_decode_u_32(dynamic raw);
@@ -76,6 +91,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void dco_decode_unit(dynamic raw);
+
+  @protected
+  WorkspaceReport dco_decode_workspace_report(dynamic raw);
 
   @protected
   WorkspaceView dco_decode_workspace_view(dynamic raw);
@@ -124,15 +142,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SessionView> sse_decode_list_session_view(SseDeserializer deserializer);
 
   @protected
+  List<TurnView> sse_decode_list_turn_view(SseDeserializer deserializer);
+
+  @protected
   List<WorkspaceView> sse_decode_list_workspace_view(
     SseDeserializer deserializer,
   );
+
+  @protected
+  OpReport sse_decode_op_report(SseDeserializer deserializer);
+
+  @protected
+  SessionDetailReport sse_decode_session_detail_report(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SessionReport sse_decode_session_report(SseDeserializer deserializer);
 
   @protected
   SessionView sse_decode_session_view(SseDeserializer deserializer);
 
   @protected
   SessionsReport sse_decode_sessions_report(SseDeserializer deserializer);
+
+  @protected
+  TurnView sse_decode_turn_view(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -142,6 +177,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_decode_unit(SseDeserializer deserializer);
+
+  @protected
+  WorkspaceReport sse_decode_workspace_report(SseDeserializer deserializer);
 
   @protected
   WorkspaceView sse_decode_workspace_view(SseDeserializer deserializer);
@@ -207,10 +245,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_turn_view(List<TurnView> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_workspace_view(
     List<WorkspaceView> self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_op_report(OpReport self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_session_detail_report(
+    SessionDetailReport self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_session_report(SessionReport self, SseSerializer serializer);
 
   @protected
   void sse_encode_session_view(SessionView self, SseSerializer serializer);
@@ -222,6 +275,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_turn_view(TurnView self, SseSerializer serializer);
+
+  @protected
   void sse_encode_u_32(int self, SseSerializer serializer);
 
   @protected
@@ -229,6 +285,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_workspace_report(
+    WorkspaceReport self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_workspace_view(WorkspaceView self, SseSerializer serializer);

@@ -31,6 +31,10 @@ kb_client_conn_mgr = { path = "../../crates/kb_client_conn_mgr" }
 # 协议类型：`list_sessions` 要把界面传来的工作区标识包成 `WorkspaceId`。
 abs_kb_svc_v1_desktop = { path = "../../../kb_svc/crates/abs_kb_svc_v1_desktop" }
 
+# 会话正文里的说话人是 `abs_llm::v1::cont::Role`（协议直接复用它，不镜像第二套枚举），
+# 因此这一层把它翻成字符串时要能命名它。
+abs_llm = { path = "../../../kb_svc/crates/abs_llm" }
+
 # 把 `kb_client_conn_mgr` 的异步接口同步化（为什么，见 `src/api/kb.rs` 的模块文档）。
 futures-lite = "2"
 

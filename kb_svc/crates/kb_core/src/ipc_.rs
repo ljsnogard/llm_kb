@@ -1,8 +1,7 @@
 //! 把本地文件存储接上 IPC：`kb_core` 这一侧的按域 RPC trait 实现。
 //!
 //! [`KbService`] 把 [`TrHandshake`] / [`TrWorkspaceService`] / [`TrSessionService`]
-//! 的每个方法原样
-//! 转发给 [`Store`]，并把 [`StoreError`] 翻成协议里的业务错误：
+//! 的每个方法原样转发给 [`Store`]，并把 [`StoreError`] 翻成协议里的业务错误：
 //!
 //! | `StoreError` | `ErrorCode` |
 //! | :--- | :--- |
@@ -10,6 +9,12 @@
 //! | `InvalidId` | `BadRequest` |
 //! | `Cancelled` | `Internal`（服务端侧被取消） |
 //! | 其它（I/O、解码、阻塞任务） | `Internal` |
+//!
+//! # 生成域：临时模拟的 LLM
+//!
+//! [`TrGeneration::ask`] 还没有真正的 LLM 插件可接，因此实现成
+//! **"把问题按字符逆序输出"**：一次提问落两条消息（`user` + 逆序的
+//! `assistant`），应答是提问之后的完整会话。细节与替换路径见 [`ask_async`]。
 //!
 //! 一个刻意的选择：[`TrKbEndpoint::Error`] 用 [`Infallible`]——服务端这一侧
 //! 不产生"传输层错误"（那是客户端代理的事），所有失败都是业务错误。
@@ -33,10 +38,12 @@ use std::convert::Infallible;
 
 use abs_cancel::{TrCancellationToken, TrMayCancel};
 use abs_kb_svc::v1::desktop::{
-    AddWorkspaceRequest, ClientInfo, CreateSessionRequest, ErrorCode, ErrorReply, PROTOCOL_VERSION,
-    RpcError, ServerInfo, SessionDetail, SessionId, SessionList, SessionSummary, TrHandshake,
-    TrKbEndpoint, TrSessionService, TrWorkspaceService, Workspace, WorkspaceId, WorkspaceList,
+    AddWorkspaceRequest, AskRequest, ClientInfo, CreateSessionRequest, ErrorCode, ErrorReply,
+    Notice, PROTOCOL_VERSION, RpcError, ServerInfo, SessionDetail, SessionId, SessionList,
+    SessionSummary, TrGeneration, TrHandshake, TrKbEndpoint, TrSessionService, TrWorkspaceService,
+    Turn, TurnId, TurnState, Workspace, WorkspaceId, WorkspaceList,
 };
+use abs_llm::v1::cont::Role;
 use gen_mcf2::gen_may_cancel_future;
 
 use crate::store_::{Store, StoreError};
@@ -247,6 +254,87 @@ where
         .map_err(store_error_)
 }
 
+/// [`TrGeneration::ask`] 的服务端实现：**临时模拟的 LLM**。
+///
+/// 真正的 LLM 插件还没接，所以这里把所有提问都当成"让模型复述"：
+///
+/// 1. 把客户端给的那条问题原样记为 `user` 回合（`turn_id` 用客户端生成的那个）；
+/// 2. 生成一条 `assistant` 回合，正文是**问题按字符逆序**的结果，并挂一条说明性
+///    [`Notice`]，让界面一眼看出这是模拟而不是真模型；
+/// 3. 用 [`Store::append_turns`] 把两条一起落盘（摘要里的 `turn_count` 与
+///    `updated_at_millis` 由存储层维护）；
+/// 4. 回**提问之后**的完整会话。
+///
+/// 走"同步落盘再回详情"是为了先验证"新增会话内容在下次连线依然可见"这条目标；
+/// 换成真 LLM 时，这里会变成事件流（见 [`TrGeneration`] 的文档），
+/// [`Store::append_turns`] 仍会是落盘入口。
+#[gen_may_cancel_future(Ask, pub)]
+pub async fn ask_async<'s, C>(
+    service: &'s KbService,
+    request: AskRequest,
+    cancel: C,
+) -> Result<SessionDetail, RpcError<Infallible>>
+where
+    C: TrCancellationToken,
+{
+    if cancel.is_cancelled() {
+        return Err(cancelled_());
+    }
+
+    // 先借 `request` 造好两条消息，再把它里面的标识移出来——反过来会变成
+    // "借一个已经被部分移走的变量"。
+    let turns = simulated_exchange_(&request);
+    let workspace_id = request.workspace_id;
+    let session_id = request.session_id;
+
+    service
+        .store_
+        .append_turns(&workspace_id, &session_id, &turns)
+        .may_cancel_with(cancel.child_token())
+        .await
+        .map_err(store_error_)?;
+
+    service
+        .store_
+        .get_session(&workspace_id, &session_id)
+        .may_cancel_with(cancel)
+        .await
+        .map_err(store_error_)
+}
+
+/// 构造一次"临时模拟 LLM"的问与答。
+///
+/// 抽成纯函数是为了能单测：逆序按**字符**（不是字节）进行，中文不会碎成半个。
+fn simulated_exchange_(request: &AskRequest) -> [Turn; 2] {
+    let user = Turn {
+        turn_id: request.turn_id.clone(),
+        role: Role::User,
+        text: request.question.clone(),
+        reasoning: String::new(),
+        state: TurnState::Done,
+        tool_calls: Vec::new(),
+        usage: None,
+        notice: None,
+    };
+
+    let assistant = Turn {
+        // 回答的标识由服务端生成：`turn_id` 标识的是"客户端发起的那一轮"。
+        turn_id: TurnId::generate(),
+        role: Role::Assistant,
+        text: request.question.chars().rev().collect(),
+        reasoning: String::new(),
+        state: TurnState::Done,
+        tool_calls: Vec::new(),
+        usage: None,
+        notice: Some(Notice {
+            message: "（kb_core 临时模拟的 LLM：回答是把问题逆序输出）".to_string(),
+            is_error: false,
+        }),
+    };
+
+    [user, assistant]
+}
+
 /// [`TrSessionService::remove_session`] 的服务端实现。
 #[gen_may_cancel_future(RemoveSession, pub)]
 pub async fn remove_session_async<'s, C>(
@@ -353,6 +441,17 @@ impl TrSessionService for KbService {
         session_id: SessionId,
     ) -> Self::RemoveSession<'f> {
         RemoveSessionAsync::new(self, workspace_id, session_id)
+    }
+}
+
+impl TrGeneration for KbService {
+    type Ask<'f>
+        = AskAsync<'f, 'f>
+    where
+        Self: 'f;
+
+    fn ask<'f>(&'f self, request: AskRequest) -> Self::Ask<'f> {
+        AskAsync::new(self, request)
     }
 }
 
@@ -521,5 +620,82 @@ mod tests_ {
             internal.as_business().map(|reply| reply.code),
             Some(ErrorCode::Internal)
         );
+    }
+
+    /// 测试模拟 LLM 的问答构造：用户回合保留客户端回合标识，助手回合是问题逆序。
+    ///
+    /// - 手段：用一个中文问题构造 [`simulated_exchange_`]。
+    /// - 判断：第一条是用户、`turn_id` 就是客户端给的那个；第二条是助手、正文
+    ///   等于按**字符**逆序的结果（中文按字而不是按字节倒过来）；助手回合带一条
+    ///   非错误的说明，提示这是模拟。
+    #[test]
+    fn simulated_exchange_reverses_by_chars_() {
+        let request = AskRequest {
+            workspace_id: WorkspaceId::new("w-1"),
+            session_id: SessionId::new("s-1"),
+            turn_id: TurnId::new("t-1"),
+            question: "abc你好".to_string(),
+            service_id: None,
+        };
+
+        let turns = simulated_exchange_(&request);
+        assert_eq!(turns[0].role, Role::User);
+        assert_eq!(turns[0].turn_id, TurnId::new("t-1"));
+        assert_eq!(turns[0].text, "abc你好");
+        assert_eq!(turns[1].role, Role::Assistant);
+        assert_eq!(turns[1].text, "好你cba");
+        assert_eq!(turns[1].state, TurnState::Done);
+        let notice = turns[1].notice.as_ref().expect("助手回合应当带说明");
+        assert!(!notice.is_error, "说明不是错误: {}", notice.message);
+    }
+
+    /// 测试 `Ask` 把一问一答落盘，且重开存储仍能看到（"下次连线依然可见"）。
+    ///
+    /// - 手段：在临时目录上建工作区与会话，直接对 [`KbService::ask`] 提问
+    ///   （中文问题），然后用同一个存储根目录重新 `Store::open` 读回。
+    /// - 判断：应答里的会话有两回合，正文分别是问题与它的逆序；`turn_count` 为 2；
+    ///   重新打开存储后两条消息仍然在——落盘的是文件，不是进程内缓存。
+    #[compio::test]
+    async fn ask_persists_the_exchange_for_the_next_connection_() {
+        let (_guard, storage, _runtime) = temp_dirs_();
+        let store = Store::open(&storage).await.expect("应当能打开存储");
+        let workspace = store
+            .add_workspace("笔记", "/tmp/notes")
+            .await
+            .expect("应当能新增工作区");
+        let session = store
+            .create_session(
+                &workspace.workspace_id,
+                Some("第一问".to_string()),
+                Vec::new(),
+            )
+            .await
+            .expect("应当能新建会话");
+        let service = KbService::new(store);
+
+        let detail = service
+            .ask(AskRequest {
+                workspace_id: workspace.workspace_id.clone(),
+                session_id: session.session_id.clone(),
+                turn_id: TurnId::new("t-1"),
+                question: "你好世界".to_string(),
+                service_id: None,
+            })
+            .await
+            .expect("提问应当成功");
+
+        assert_eq!(detail.turns.len(), 2);
+        assert_eq!(detail.turns[0].turn_id, TurnId::new("t-1"));
+        assert_eq!(detail.turns[1].text, "界世好你");
+        assert_eq!(detail.summary.turn_count, 2);
+
+        let reopened = Store::open(&storage).await.expect("应当能重新打开存储");
+        let read_back = reopened
+            .get_session(&workspace.workspace_id, &session.session_id)
+            .await
+            .expect("应当能读回会话");
+        assert_eq!(read_back.turns.len(), 2);
+        assert_eq!(read_back.turns[0].text, "你好世界");
+        assert_eq!(read_back.turns[1].text, "界世好你");
     }
 }

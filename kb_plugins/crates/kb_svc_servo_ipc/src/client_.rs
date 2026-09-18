@@ -35,10 +35,10 @@ use std::time::Duration;
 
 use abs_cancel::TrCancellationToken;
 use abs_kb_svc::v1::desktop::{
-    AddWorkspaceRequest, ClientInfo, CreateSessionRequest, Event, Reply, ReplyEnvelope, Request,
-    RequestEnvelope, RequestId, RpcError, ServerInfo, SessionDetail, SessionId, SessionList,
-    SessionSummary, TrHandshake, TrKbEndpoint, TrSessionService, TrWorkspaceService, Workspace,
-    WorkspaceId, WorkspaceList,
+    AddWorkspaceRequest, AskRequest, ClientInfo, CreateSessionRequest, Event, Reply, ReplyEnvelope,
+    Request, RequestEnvelope, RequestId, RpcError, ServerInfo, SessionDetail, SessionId,
+    SessionList, SessionSummary, TrGeneration, TrHandshake, TrKbEndpoint, TrSessionService,
+    TrWorkspaceService, Workspace, WorkspaceId, WorkspaceList,
 };
 use futures_channel::oneshot;
 use futures_lite::{Stream, StreamExt};
@@ -135,9 +135,9 @@ impl Client {
 
     /// 取出服务端主动推送的事件流（**只能取一次**，第二次返回 `None`）。
     ///
-    /// 事件通道在连接建立时就已经开好；但事件是生成相关域（`Ask` / `Delta`…）
-    /// 的产物，那些 trait 还没落地，所以这里先把流交出去、由调用方自己驱动。
-    /// 取出来的流是运行时无关的 [`Stream`]。
+    /// 事件通道在连接建立时就已经开好；但事件是**流式**生成域的产物，而那个域
+    /// 还没落地——现在的 [`TrGeneration::ask`] 是同步一问一答，服务端不会推事件。
+    /// 这里先把流交出去、由调用方自己驱动，等流式生成接上之后它会自然有内容。
     pub fn events(&self) -> Option<impl Stream<Item = Result<Event, ServoIpcError>>> {
         let receiver = lock_(&self.event_rx_).take()?;
         Some(
@@ -401,6 +401,26 @@ where
     }
 }
 
+/// [`TrGeneration::ask`] 的代理实现。
+///
+/// 应答是 `Reply::SessionDetail`：同步一问一答阶段的形状，理由见
+/// [`TrGeneration`] 的文档。
+#[gen_may_cancel_future(Ask, pub)]
+pub async fn ask_async<'c, C>(
+    client: &'c Client,
+    request: AskRequest,
+    cancel: C,
+) -> Result<SessionDetail, RpcError<ServoIpcError>>
+where
+    C: TrCancellationToken,
+{
+    match client.request_(Request::Ask(request), cancel).await? {
+        Reply::SessionDetail(detail) => Ok(detail),
+        Reply::Error(error) => Err(RpcError::Business(error)),
+        other => Err(RpcError::Transport(unexpected_("SessionDetail", &other))),
+    }
+}
+
 /// [`TrSessionService::remove_session`] 的代理实现。
 #[gen_may_cancel_future(RemoveSession, pub)]
 pub async fn remove_session_async<'c, C>(
@@ -517,10 +537,20 @@ impl TrSessionService for Client {
     }
 }
 
+impl TrGeneration for Client {
+    type Ask<'f>
+        = AskAsync<'f, 'f>
+    where
+        Self: 'f;
+
+    fn ask<'f>(&'f self, request: AskRequest) -> Self::Ask<'f> {
+        AskAsync::new(self, request)
+    }
+}
+
 // ============================================================================
 // 内部辅助
 // ============================================================================
-
 /// 路由线程：把应答按 `request_id` 交给对应的等待者。
 ///
 /// 这是客户端侧唯一的阻塞收包点。通道关闭时清空 `pending_`，

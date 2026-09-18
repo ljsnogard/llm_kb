@@ -1,7 +1,7 @@
 # kb_client_conn_mgr
 
 `kb_admin_desktop` 的**连接管理器**：按一条连接方式把客户端接上 `kb_core`，
-然后暴露一组窄查询（列工作区 / 列会话）。
+然后暴露一组窄接口（工作区 / 会话的增删查）。
 
 ```text
 读配置（kb_client_config）
@@ -9,9 +9,17 @@
 连接（本 crate）
    ├─ ① 系统层握手：起本机 kb_core / 附着到本机 kb_core / 连远程网关
    └─ ② 应用层握手：Request::Hello → Reply::Hello
-查询
+工作区
    ├─ list_workspaces()
-   └─ list_sessions(workspace_id)
+   ├─ add_workspace(request)     目录是 kb_core 所在主机上的路径
+   └─ remove_workspace(id)       服务端级联删除它名下的会话
+会话
+   ├─ list_sessions(workspace_id)
+   ├─ create_session(request)
+   └─ remove_session(workspace_id, session_id)
+正文与生成
+   ├─ get_session(workspace_id, session_id)   完整正文
+   └─ ask(request)                            同步一问一答（kb_core 里是临时模拟的 LLM）
 ```
 
 ## 三种连接方式
@@ -33,7 +41,21 @@ let client = connect(profile).may_cancel_with(token).await?;
 
 let token = TimeoutToken::after(client.request_timeout());
 let workspaces = client.list_workspaces().may_cancel_with(token).await?;
+
+// 增删走同一套窄接口；标识一律由 kb_core 分配。
+let workspace = client
+    .add_workspace(AddWorkspaceRequest {
+        local_id: LocalId::generate(),
+        name: "笔记".to_string(),
+        path: "/srv/notes".to_string(),   // kb_core 主机上的目录
+    })
+    .may_cancel_with(token)
+    .await?;
 ```
+
+`local_id` 是协议里的簿记字段：线上仍然带着它往返一次，但**这些方法不把它
+返回给调用方**——调用方本来就知道自己发的是哪一个，它要的是服务端分配的
+`workspace_id` / `session_id`。
 
 - **不挑异步运行时**：所有公开异步入口都由 `gen_mcf2::gen_may_cancel_future`
   展开成「不可取消 / 可取消」两条路径；future 里没有阻塞调用——阻塞的
@@ -59,7 +81,15 @@ let workspaces = client.list_workspaces().may_cancel_with(token).await?;
 
 - 不读配置文件（那是 `kb_client_config`）；
 - 不做界面（FRB 那一层再把结果翻成扁平 DTO）；
-- 不实现应用层的其它域（设置 / 目录 / 生成）——协议那边还没落地。
+- 不实现设置（`TrSettingsService`）与目录（`TrDirectoryService`）——协议那边还没落地；
+- **生成只做到"同步一问一答"**（`ask` → 提问之后的 `SessionDetail`）：流式增量与
+  取消还没定义，见 `abs_kb_svc_v1_desktop::TrGeneration` 的文档；
+- **不做工作区 / 会话的"改"**（重命名、换路径）：协议里还没有
+  `UpdateWorkspace` / `RenameSession` 这两种请求。存储层其实已经具备能力
+  （`kb_core` 的 `Store::save_workspace` / `rename_session`），缺的只是协议
+  与 trait 的公开面；提案见
+  [`dev-notes/kb_admin_desktop-20260918-1712.md`](../../../dev-notes/kb_admin_desktop-20260918-1712.md)
+  §3。
 
 ## 验证
 
@@ -67,8 +97,8 @@ let workspaces = client.list_workspaces().may_cancel_with(token).await?;
 cargo test -p kb_client_conn_mgr
 ```
 
-2 个单元测试（超时令牌）+ 5 个集成测试（假网关：正常往返、业务错误透传、
-取消、坏帧判死、不可取消路径）+ 1 个文档测试。
+2 个单元测试（超时令牌）+ 7 个集成测试（假网关：正常往返、工作区 / 会话增删、
+读正文与提问、业务错误透传、取消、坏帧判死、不可取消路径）+ 1 个文档测试。
 
 真进程的端到端验证用附带的小 CLI：
 

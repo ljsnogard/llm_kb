@@ -29,6 +29,15 @@ typedef SessionView = frb.SessionView;
 typedef WorkspacesReport = frb.WorkspacesReport;
 typedef SessionsReport = frb.SessionsReport;
 
+/// 新建工作区 / 会话的结果，以及"删除"这类没有返回值的操作的结果。
+typedef WorkspaceReport = frb.WorkspaceReport;
+typedef SessionReport = frb.SessionReport;
+typedef OpReport = frb.OpReport;
+
+/// 会话正文：摘要 + 全部消息（`TurnView` 是一条消息）。
+typedef SessionDetailReport = frb.SessionDetailReport;
+typedef TurnView = frb.TurnView;
+
 /// 连接相关的原生接口。
 ///
 /// 每个方法都对应 `rust/src/api/kb.rs` 里的一个函数；原生侧写成同步函数 +
@@ -66,6 +75,47 @@ abstract class KbClientApi {
 
   /// 列出某个工作区下的会话。
   Future<SessionsReport> listSessions(String workspaceId);
+
+  /// 在 `kb_core` 上新建一个工作区。
+  ///
+  /// `path` 是 **`kb_core` 所在主机上**的目录：客户端这边不做任何本地文件系统
+  /// 操作，只把「名字 + 路径」提交给服务端。
+  Future<WorkspaceReport> addWorkspace({
+    required String name,
+    required String path,
+  });
+
+  /// 删除一个工作区（服务端会级联删除它名下的会话）。
+  Future<OpReport> removeWorkspace(String workspaceId);
+
+  /// 在某个工作区下新建一个会话。
+  Future<SessionReport> createSession({
+    required String workspaceId,
+    required String title,
+  });
+
+  /// 删除一个会话。
+  Future<OpReport> removeSession({
+    required String workspaceId,
+    required String sessionId,
+  });
+
+  /// 读取一个会话的完整内容（摘要 + 全部消息）。
+  Future<SessionDetailReport> getSession({
+    required String workspaceId,
+    required String sessionId,
+  });
+
+  /// 就某个会话提问，回来后拿到**提问之后**的会话内容。
+  ///
+  /// `kb_core` 现在跑的是临时模拟的 LLM（把问题逆序输出），所以返回值里已经
+  /// 带着刚产生的两条消息，不需要再调 [getSession]。
+  Future<SessionDetailReport> ask({
+    required String workspaceId,
+    required String sessionId,
+    required String turnId,
+    required String question,
+  });
 }
 
 /// 真实现：转发给生成的原生绑定。
@@ -109,4 +159,45 @@ class FrbKbClientApi implements KbClientApi {
   @override
   Future<SessionsReport> listSessions(String workspaceId) =>
       frb.listSessions(workspaceId: workspaceId);
+
+  @override
+  Future<WorkspaceReport> addWorkspace({
+    required String name,
+    required String path,
+  }) => frb.addWorkspace(name: name, path: path);
+
+  @override
+  Future<OpReport> removeWorkspace(String workspaceId) =>
+      frb.removeWorkspace(workspaceId: workspaceId);
+
+  @override
+  Future<SessionReport> createSession({
+    required String workspaceId,
+    required String title,
+  }) => frb.createSession(workspaceId: workspaceId, title: title);
+
+  @override
+  Future<OpReport> removeSession({
+    required String workspaceId,
+    required String sessionId,
+  }) => frb.removeSession(workspaceId: workspaceId, sessionId: sessionId);
+
+  @override
+  Future<SessionDetailReport> getSession({
+    required String workspaceId,
+    required String sessionId,
+  }) => frb.getSession(workspaceId: workspaceId, sessionId: sessionId);
+
+  @override
+  Future<SessionDetailReport> ask({
+    required String workspaceId,
+    required String sessionId,
+    required String turnId,
+    required String question,
+  }) => frb.ask(
+    workspaceId: workspaceId,
+    sessionId: sessionId,
+    turnId: turnId,
+    question: question,
+  );
 }

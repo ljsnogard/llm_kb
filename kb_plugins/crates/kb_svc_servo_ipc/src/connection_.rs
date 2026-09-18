@@ -101,9 +101,9 @@ impl Connection {
 
 /// 把一个请求派发给业务实现，并翻成协议里的应答。
 ///
-/// 目前只覆盖工作区与会话两个域（正好是"增删查改"的实践范围）；其余请求
-/// 对应的 trait 还没落地，这里明确回一个 `BadRequest` 而不是静默丢弃——
-/// 客户端必须能看出"这条请求现在还不支持"。
+/// 覆盖工作区、会话与生成（`Ask`）三个域；其余请求对应的 trait 还没落地，
+/// 这里明确回一个 `BadRequest` 而不是静默丢弃——客户端必须能看出"这条请求
+/// 现在还不支持"。
 async fn dispatch_<S>(service: &S, request: Request) -> Reply
 where
     S: TrKbService,
@@ -111,6 +111,12 @@ where
     match request {
         Request::Hello(client) => match service.hello(client).await {
             Ok(info) => Reply::Hello(info),
+            Err(error) => business_reply_(error),
+        },
+        // `Ask` 的应答复用 `Reply::SessionDetail`：同步阶段它就是"提问之后的
+        // 会话内容"，理由见 `TrGeneration` 的文档。
+        Request::Ask(payload) => match service.ask(payload).await {
+            Ok(detail) => Reply::SessionDetail(detail),
             Err(error) => business_reply_(error),
         },
         Request::ListWorkspaces => match service.list_workspaces().await {

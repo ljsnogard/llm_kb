@@ -1,7 +1,7 @@
 //! # kb_client_conn_mgr
 //!
 //! `kb_admin_desktop` 的**连接管理器**：按一条连接方式（[`kb_client_config::Connection`]）
-//! 把客户端接上 `kb_core`，然后暴露一组窄查询（列工作区 / 列会话）。
+//! 把客户端接上 `kb_core`，然后暴露一组窄接口（工作区 / 会话的增删查）。
 //!
 //! ```text
 //! 读配置（kb_client_config）
@@ -9,9 +9,16 @@
 //! 连接（本 crate）
 //!    ├─ ① 系统层握手：起本机 kb_core / 附着到本机 kb_core / 连远程网关
 //!    └─ ② 应用层握手：Request::Hello → Reply::Hello
-//! 查询
+//! 工作区
 //!    ├─ list_workspaces()
-//!    └─ list_sessions(workspace_id)
+//!    ├─ add_workspace(request)      目录是 kb_core 所在主机上的路径
+//!    └─ remove_workspace(id)        服务端级联删除它名下的会话
+//! 会话
+//!    ├─ list_sessions(workspace_id)
+//!    ├─ create_session(request)
+//!    ├─ remove_session(workspace_id, session_id)
+//!    ├─ get_session(workspace_id, session_id)   完整正文
+//!    └─ ask(request)                            同步一问一答（见 TrGeneration）
 //! ```
 //!
 //! # 三种连接方式

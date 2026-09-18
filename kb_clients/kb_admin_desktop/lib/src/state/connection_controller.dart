@@ -62,6 +62,14 @@ class ConnectionController extends ChangeNotifier {
   final Set<String> _loadingSessions = <String>{};
   String? _selectedWorkspaceId;
 
+  /// 选中的会话（连同它属于哪个工作区，因为读取正文两个标识都要）。
+  String? _selectedSessionId;
+  String? _selectedSessionWorkspaceId;
+
+  /// 已经拉到的会话正文，按会话标识缓存。
+  final Map<String, SessionDetailReport> _details = <String, SessionDetailReport>{};
+  final Set<String> _loadingDetails = <String>{};
+
   Map<String, String> _kindDescriptions = const <String, String>{};
 
   // ── 只读状态 ────────────────────────────────────────────────────────
@@ -120,6 +128,51 @@ class ConnectionController extends ChangeNotifier {
 
   /// 当前选中的工作区标识。
   String? get selectedWorkspaceId => _selectedWorkspaceId;
+
+  /// 当前选中的工作区（服务端对象）；没选中或已消失时是 `null`。
+  WorkspaceView? get selectedServerWorkspace {
+    final String? id = _selectedWorkspaceId;
+    if (id == null) {
+      return null;
+    }
+    for (final WorkspaceView workspace in _workspaces) {
+      if (workspace.id == id) {
+        return workspace;
+      }
+    }
+    return null;
+  }
+
+  /// 当前选中的会话标识。
+  String? get selectedSessionId => _selectedSessionId;
+
+  /// 当前选中的会话摘要（来自列表缓存）。
+  SessionView? get selectedServerSession {
+    final String? sessionId = _selectedSessionId;
+    final String? workspaceId = _selectedSessionWorkspaceId;
+    if (sessionId == null || workspaceId == null) {
+      return null;
+    }
+    for (final SessionView session
+        in _sessions[workspaceId] ?? const <SessionView>[]) {
+      if (session.id == sessionId) {
+        return session;
+      }
+    }
+    return null;
+  }
+
+  /// 当前选中的会话正文；还没拉到时是 `null`。
+  SessionDetailReport? get selectedSessionDetail {
+    final String? sessionId = _selectedSessionId;
+    return sessionId == null ? null : _details[sessionId];
+  }
+
+  /// 某个会话的正文；还没拉到或失败时是 `null`。
+  SessionDetailReport? sessionDetailOf(String sessionId) => _details[sessionId];
+
+  /// 某个会话的正文是不是正在拉。
+  bool isLoadingDetail(String sessionId) => _loadingDetails.contains(sessionId);
 
   /// 某个工作区已经拉到的会话；还没拉过时返回空列表。
   List<SessionView> sessionsOf(String workspaceId) =>
@@ -268,6 +321,7 @@ class ConnectionController extends ChangeNotifier {
       if (report.ok) {
         _workspaces = report.workspaces;
         _sessions.clear();
+        _resetSessionSelection_();
         _error = '';
         if (_selectedWorkspaceId == null ||
             !_workspaces.any((WorkspaceView item) => item.id == _selectedWorkspaceId)) {
@@ -289,10 +343,62 @@ class ConnectionController extends ChangeNotifier {
   Future<void> selectWorkspace(String workspaceId) async {
     final bool changed = _selectedWorkspaceId != workspaceId;
     _selectedWorkspaceId = workspaceId;
+    // 切到别的工作区时，原来选中的会话不再属于当前上下文。
+    if (_selectedSessionWorkspaceId != workspaceId) {
+      _selectedSessionId = null;
+      _selectedSessionWorkspaceId = null;
+    }
     if (changed) {
       notifyListeners();
     }
     await loadSessions(workspaceId);
+  }
+
+  /// 选中一个会话：切工作区、切会话，并按需把正文拉下来。
+  Future<void> selectSession(String workspaceId, String sessionId) async {
+    _selectedWorkspaceId = workspaceId;
+    final bool changed = _selectedSessionId != sessionId;
+    _selectedSessionId = sessionId;
+    _selectedSessionWorkspaceId = workspaceId;
+    if (changed) {
+      notifyListeners();
+    }
+    // 会话摘要来自列表缓存；调用方可能还没拉过（例如直接按标识选中）。
+    await loadSessions(workspaceId);
+    await loadSessionDetail(workspaceId, sessionId);
+  }
+
+  /// 拉某个会话的正文（已经拉过就不重复拉）。
+  Future<void> loadSessionDetail(
+    String workspaceId,
+    String sessionId, {
+    bool force = false,
+  }) async {
+    if (!connected || _loadingDetails.contains(sessionId)) {
+      return;
+    }
+    if (!force && _details.containsKey(sessionId)) {
+      return;
+    }
+
+    _loadingDetails.add(sessionId);
+    notifyListeners();
+    try {
+      final SessionDetailReport report = await _api.getSession(
+        workspaceId: workspaceId,
+        sessionId: sessionId,
+      );
+      if (report.ok) {
+        _details[sessionId] = report;
+      } else {
+        _error = report.error;
+      }
+    } catch (error) {
+      _error = '读会话失败: $error';
+    } finally {
+      _loadingDetails.remove(sessionId);
+      notifyListeners();
+    }
   }
 
   /// 拉某个工作区的会话（已经拉过就不重复拉）。
@@ -322,7 +428,199 @@ class ConnectionController extends ChangeNotifier {
     }
   }
 
+  // ── 增删（工作区 / 会话） ───────────────────────────────────────────
+  //
+  // 这些操作都发生在 **`kb_core` 进程所在的主机**上：界面只提交名字与路径，
+  // 不碰客户端自己这边的文件系统（见 `ConnectionController` 的类注释）。
+  // 每个方法都返回空串表示成功，否则是给用户看的失败说明。
+
+  /// 在服务端新建一个工作区；`path` 是服务端主机上的目录。
+  Future<String> addWorkspace({required String name, required String path}) async {
+    if (!connected) {
+      return _notConnected_;
+    }
+    return _mutate_(() async {
+      final WorkspaceReport report = await _api.addWorkspace(
+        name: name,
+        path: path,
+      );
+      if (!report.ok) {
+        return report.error;
+      }
+      await _refreshLocked();
+      // 新建出来的工作区直接选中：用户多半接着要往里加会话。
+      _selectedWorkspaceId = report.workspace.id;
+      return '';
+    });
+  }
+
+  /// 删除一个工作区；服务端会级联删掉它名下的会话。
+  Future<String> removeWorkspace(String workspaceId) async {
+    if (!connected) {
+      return _notConnected_;
+    }
+    return _mutate_(() async {
+      final OpReport report = await _api.removeWorkspace(workspaceId);
+      if (!report.ok) {
+        return report.error;
+      }
+      _sessions.remove(workspaceId);
+      if (_selectedWorkspaceId == workspaceId) {
+        _selectedWorkspaceId = null;
+      }
+      if (_selectedSessionWorkspaceId == workspaceId) {
+        _resetSessionSelection_();
+      }
+      await _refreshLocked();
+      return '';
+    });
+  }
+
+  /// 在某个工作区下新建一个会话。
+  ///
+  /// `title` 为空串时由服务端推导标题（新会话还没有消息，会落到缺省标题）。
+  Future<String> addSession(String workspaceId, {String title = ''}) async {
+    if (!connected) {
+      return _notConnected_;
+    }
+    return _mutate_(() async {
+      final SessionReport report = await _api.createSession(
+        workspaceId: workspaceId,
+        title: title,
+      );
+      if (!report.ok) {
+        return report.error;
+      }
+      _selectedWorkspaceId = workspaceId;
+      await _reloadSessions_(workspaceId);
+      return '';
+    });
+  }
+
+  /// 删除一个会话。
+  Future<String> removeSession(String workspaceId, String sessionId) async {
+    if (!connected) {
+      return _notConnected_;
+    }
+    return _mutate_(() async {
+      final OpReport report = await _api.removeSession(
+        workspaceId: workspaceId,
+        sessionId: sessionId,
+      );
+      if (!report.ok) {
+        return report.error;
+      }
+      if (_selectedSessionId == sessionId) {
+        _resetSessionSelection_();
+      } else {
+        _details.remove(sessionId);
+      }
+      await _reloadSessions_(workspaceId);
+      return '';
+    });
+  }
+
+  /// 在当前选中的工作区里新建一个会话。
+  ///
+  /// 侧边栏顶部的「新会话」按钮在已连接时走这里；返回空串表示成功。
+  Future<String> newSessionInSelectedWorkspace() async {
+    if (_workspaces.isEmpty) {
+      return '还没有工作区，先在列表右上角新建一个';
+    }
+    final String? workspaceId = _selectedWorkspaceId;
+    if (workspaceId == null) {
+      return '还没有选中工作区';
+    }
+    return addSession(workspaceId);
+  }
+
+  // ── 提问（生成） ────────────────────────────────────────────────────
+
+  /// 向当前选中的会话提问；返回空串表示成功。
+  ///
+  /// `kb_core` 现在跑的是临时模拟的 LLM（把问题逆序输出），一回就带着两条新
+  /// 消息回来，因此这里直接更新正文缓存，并顺手刷新会话列表（`turn_count` 变了）。
+  /// 换成真 LLM 的流式生成后，这里会改成"发出去 + 订阅事件"。
+  Future<String> ask(String question) async {
+    if (!connected) {
+      return _notConnected_;
+    }
+    if (_busy) {
+      return '上一条提问还在处理中';
+    }
+    final WorkspaceView? workspace = selectedServerWorkspace;
+    final String? sessionId = _selectedSessionId;
+    if (workspace == null || sessionId == null) {
+      return '先在左侧选一个会话';
+    }
+    final String text = question.trim();
+    if (text.isEmpty) {
+      return '';
+    }
+
+    return _mutate_(() async {
+      final SessionDetailReport report = await _api.ask(
+        workspaceId: workspace.id,
+        sessionId: sessionId,
+        turnId: _newTurnId_(),
+        question: text,
+      );
+      if (!report.ok) {
+        return report.error;
+      }
+      _details[sessionId] = report;
+      await _reloadSessions_(workspace.id);
+      return '';
+    });
+  }
+
   // ── 内部 ────────────────────────────────────────────────────────────
+
+  /// 还没连上 `kb_core` 时统一的说明。
+  static const String _notConnected_ = '还没有连接 kb_core';
+
+  /// 清掉"选中的会话"与正文缓存。
+  void _resetSessionSelection_() {
+    _selectedSessionId = null;
+    _selectedSessionWorkspaceId = null;
+    _details.clear();
+    _loadingDetails.clear();
+  }
+
+  /// 生成一个回合标识（协议要求它由客户端生成）。
+  String _newTurnId_() => 't-${DateTime.now().microsecondsSinceEpoch}';
+
+  /// 一次会改动服务端状态的操作：统一处理忙标记、错误与通知。
+  Future<String> _mutate_(Future<String> Function() work) async {
+    _busy = true;
+    notifyListeners();
+    try {
+      final String error = await work();
+      _error = error;
+      return error;
+    } catch (error) {
+      final String message = '操作失败: $error';
+      _error = message;
+      return message;
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
+  /// 重新拉某个工作区的会话（不做"已缓存就跳过"的判断）。
+  Future<void> _reloadSessions_(String workspaceId) async {
+    try {
+      final SessionsReport report = await _api.listSessions(workspaceId);
+      if (report.ok) {
+        _sessions[workspaceId] = report.sessions;
+      } else {
+        _error = report.error;
+      }
+    } catch (error) {
+      _error = '列会话失败: $error';
+    }
+  }
 
   /// 真正做连接（调用方负责 `_busy` 与 `notifyListeners`）。
   Future<bool> _connectLocked(ConnectionView profile) async {
@@ -356,6 +654,7 @@ class ConnectionController extends ChangeNotifier {
     _selectedWorkspaceId = null;
     _workspaces = const <WorkspaceView>[];
     _sessions.clear();
+    _resetSessionSelection_();
 
     await _refreshLocked();
     debugPrint(
@@ -391,6 +690,7 @@ class ConnectionController extends ChangeNotifier {
     _workspaces = const <WorkspaceView>[];
     _sessions.clear();
     _selectedWorkspaceId = null;
+    _resetSessionSelection_();
   }
 
   /// 取缺省那一条：`defaultName` 指定的；没指定就用第一条。

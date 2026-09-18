@@ -131,7 +131,8 @@ pub use request_::{
     AddWorkspaceRequest, AskRequest, CreateSessionRequest, Request, UpsertServiceRequest,
 };
 pub use rpc_::{
-    RpcError, TrHandshake, TrKbEndpoint, TrKbService, TrSessionService, TrWorkspaceService,
+    RpcError, TrGeneration, TrHandshake, TrKbEndpoint, TrKbService, TrSessionService,
+    TrWorkspaceService,
 };
 pub use service_::{ApiKeyUpdate, MASKED_API_KEY, ServiceList, ServiceSummary};
 pub use workspace_::{SessionDetail, SessionList, SessionSummary, Workspace, WorkspaceList};

@@ -208,9 +208,8 @@ impl Store {
     /// 向一个会话追加若干条消息，并同步刷新摘要。
     ///
     /// 这是「提问 → 增量 → 落库」链路要用到的写入口：摘要里的 `turn_count` 与
-    /// `updated_at_millis` 由本方法维护，调用方不必操心。
-    // 目前只有单元测试在调用；接上生成域之后就会进入请求处理路径。
-    #[allow(dead_code)]
+    /// `updated_at_millis` 由本方法维护，调用方不必操心。`kb_core` 的
+    /// `TrGeneration::ask`（临时模拟的 LLM）就是它的第一个生产调用方。
     pub fn append_turns<'f>(
         &'f self,
         workspace_id: &'f WorkspaceId,

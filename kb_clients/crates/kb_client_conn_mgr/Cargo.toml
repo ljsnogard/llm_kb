@@ -39,3 +39,6 @@ env_logger = { version = "0.11.*" }
 
 # 本地路径的测试要临时目录；也用于假网关。
 tempfile = { version = "3.*" }
+
+# 假网关要构造带消息的会话详情，而 `Turn.role` 用的是 `abs_llm::v1::cont::Role`。
+abs_llm = { path = "../../../kb_svc/crates/abs_llm" }

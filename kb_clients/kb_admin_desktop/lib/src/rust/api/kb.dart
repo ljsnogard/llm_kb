@@ -7,8 +7,8 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `connection_of_`, `connection_summary_`, `current_`, `describe_client_error_`, `lock_`, `view_of_`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `connection_of_`, `connection_summary_`, `current_`, `describe_client_error_`, `detail_report_`, `lock_`, `role_name_`, `session_view_`, `state_name_`, `turn_view_`, `view_of_`, `workspace_view_`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// 三种连接方式的 `kind` 取值（界面用它填下拉框）。
 ///
@@ -69,6 +69,67 @@ Future<WorkspacesReport> listWorkspaces() =>
 /// 列出某个工作区下的会话（只有摘要）。
 Future<SessionsReport> listSessions({required String workspaceId}) =>
     RustLib.instance.api.crateApiKbListSessions(workspaceId: workspaceId);
+
+/// 在 `kb_core` 上新建一个工作区。
+///
+/// `path` 是 **`kb_core` 所在主机上**的目录：客户端不碰自己这边的文件系统，
+/// 只把「名字 + 路径」提交给服务端，由服务端分配标识并落盘。
+Future<WorkspaceReport> addWorkspace({
+  required String name,
+  required String path,
+}) => RustLib.instance.api.crateApiKbAddWorkspace(name: name, path: path);
+
+/// 删除一个工作区；`kb_core` 会**级联删除**它名下的会话。
+Future<OpReport> removeWorkspace({required String workspaceId}) =>
+    RustLib.instance.api.crateApiKbRemoveWorkspace(workspaceId: workspaceId);
+
+/// 在某个工作区下新建一个会话。
+///
+/// `title` 为空串时由服务端推导：新会话还没有消息，因此会落到缺省标题。
+Future<SessionReport> createSession({
+  required String workspaceId,
+  required String title,
+}) => RustLib.instance.api.crateApiKbCreateSession(
+  workspaceId: workspaceId,
+  title: title,
+);
+
+/// 删除一个会话。
+Future<OpReport> removeSession({
+  required String workspaceId,
+  required String sessionId,
+}) => RustLib.instance.api.crateApiKbRemoveSession(
+  workspaceId: workspaceId,
+  sessionId: sessionId,
+);
+
+/// 读取一个会话的完整内容（摘要 + 全部消息）。
+Future<SessionDetailReport> getSession({
+  required String workspaceId,
+  required String sessionId,
+}) => RustLib.instance.api.crateApiKbGetSession(
+  workspaceId: workspaceId,
+  sessionId: sessionId,
+);
+
+/// 就某个会话提问，回来后拿到**提问之后**的会话内容。
+///
+/// `kb_core` 现在跑的是**临时模拟的 LLM**：它把问题逆序输出当作回答，并把
+/// 一问一答一起落盘。所以调用方不需要再调 [`get_session`]——返回值里已经有
+/// 刚产生的两条消息。等流式生成落地后，这个入口会改成订阅事件。
+///
+/// `turn_id` 由调用方生成：这样"发出提问"到"拿到回答"之间界面也有标识可用。
+Future<SessionDetailReport> ask({
+  required String workspaceId,
+  required String sessionId,
+  required String turnId,
+  required String question,
+}) => RustLib.instance.api.crateApiKbAsk(
+  workspaceId: workspaceId,
+  sessionId: sessionId,
+  turnId: turnId,
+  question: question,
+);
 
 /// 配置文件的快照。
 class ConfigView {
@@ -286,6 +347,103 @@ class ConnectionView {
           address == other.address;
 }
 
+/// 一次"没有返回值"的操作（删除）的结果。
+class OpReport {
+  /// 是否成功。
+  final bool ok;
+
+  /// 失败的说明；空串表示成功。
+  final String error;
+
+  const OpReport({required this.ok, required this.error});
+
+  static Future<OpReport> default_() =>
+      RustLib.instance.api.crateApiKbOpReportDefault();
+
+  @override
+  int get hashCode => ok.hashCode ^ error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OpReport &&
+          runtimeType == other.runtimeType &&
+          ok == other.ok &&
+          error == other.error;
+}
+
+/// 一个会话的完整内容（摘要 + 全部消息）。
+class SessionDetailReport {
+  /// 是否成功。
+  final bool ok;
+
+  /// 会话摘要（失败时是一个空视图）。
+  final SessionView session;
+
+  /// 会话内的全部消息，按时间顺序。
+  final List<TurnView> turns;
+
+  /// 失败的说明；空串表示成功。
+  final String error;
+
+  const SessionDetailReport({
+    required this.ok,
+    required this.session,
+    required this.turns,
+    required this.error,
+  });
+
+  static Future<SessionDetailReport> default_() =>
+      RustLib.instance.api.crateApiKbSessionDetailReportDefault();
+
+  @override
+  int get hashCode =>
+      ok.hashCode ^ session.hashCode ^ turns.hashCode ^ error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SessionDetailReport &&
+          runtimeType == other.runtimeType &&
+          ok == other.ok &&
+          session == other.session &&
+          turns == other.turns &&
+          error == other.error;
+}
+
+/// 新建一个会话的结果。
+class SessionReport {
+  /// 是否成功。
+  final bool ok;
+
+  /// 服务端建立的会话摘要（失败时是一个空视图）。
+  final SessionView session;
+
+  /// 失败的说明；空串表示成功。
+  final String error;
+
+  const SessionReport({
+    required this.ok,
+    required this.session,
+    required this.error,
+  });
+
+  static Future<SessionReport> default_() =>
+      RustLib.instance.api.crateApiKbSessionReportDefault();
+
+  @override
+  int get hashCode => ok.hashCode ^ session.hashCode ^ error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SessionReport &&
+          runtimeType == other.runtimeType &&
+          ok == other.ok &&
+          session == other.session &&
+          error == other.error;
+}
+
 /// 一个会话（只有摘要）。
 class SessionView {
   /// 会话标识。
@@ -364,6 +522,102 @@ class SessionsReport {
           runtimeType == other.runtimeType &&
           ok == other.ok &&
           sessions == other.sessions &&
+          error == other.error;
+}
+
+/// 会话里的一条消息（扁平视图）。
+///
+/// `reasoning` / `state` / `notice` 都保留了协议里的形状，即使当前的临时模拟
+/// LLM 只产出"已完成的纯文本"——以后接上流式生成时，界面不用改数据形状。
+class TurnView {
+  /// 回合标识。
+  final String id;
+
+  /// 说话人：`user` / `assistant` / `system` / `tool`。
+  final String role;
+
+  /// 正文。
+  final String text;
+
+  /// 推理正文。
+  final String reasoning;
+
+  /// 生成状态：`streaming` / `done` / `failed`。
+  final String state;
+
+  /// 提示正文；空串表示没有提示。
+  final String notice;
+
+  /// 提示是不是错误。
+  final bool noticeIsError;
+
+  const TurnView({
+    required this.id,
+    required this.role,
+    required this.text,
+    required this.reasoning,
+    required this.state,
+    required this.notice,
+    required this.noticeIsError,
+  });
+
+  static Future<TurnView> default_() =>
+      RustLib.instance.api.crateApiKbTurnViewDefault();
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      role.hashCode ^
+      text.hashCode ^
+      reasoning.hashCode ^
+      state.hashCode ^
+      notice.hashCode ^
+      noticeIsError.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TurnView &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          role == other.role &&
+          text == other.text &&
+          reasoning == other.reasoning &&
+          state == other.state &&
+          notice == other.notice &&
+          noticeIsError == other.noticeIsError;
+}
+
+/// 新建一个工作区的结果。
+class WorkspaceReport {
+  /// 是否成功。
+  final bool ok;
+
+  /// 服务端建立的工作区（失败时是一个空视图）。
+  final WorkspaceView workspace;
+
+  /// 失败的说明；空串表示成功。
+  final String error;
+
+  const WorkspaceReport({
+    required this.ok,
+    required this.workspace,
+    required this.error,
+  });
+
+  static Future<WorkspaceReport> default_() =>
+      RustLib.instance.api.crateApiKbWorkspaceReportDefault();
+
+  @override
+  int get hashCode => ok.hashCode ^ workspace.hashCode ^ error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is WorkspaceReport &&
+          runtimeType == other.runtimeType &&
+          ok == other.ok &&
+          workspace == other.workspace &&
           error == other.error;
 }
 

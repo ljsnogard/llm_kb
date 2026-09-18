@@ -8,13 +8,22 @@
 //   对话区不付出任何宽度代价）；
 // - 中间是消息列表，正文最大宽度 `clamp(680px, 64%, 920px)` 并居中；
 // - 底部是输入区。
+//
+// # 两种数据来源
+//
+// - **已连上 `kb_core`**：正文来自服务端（`GetSession` 读历史、`Ask` 提问），
+//   提问后服务端会把一问一答落盘，重新连线仍然看得到；
+// - **未连接**：退回本地那一套（`AppController`），这样没有服务端也能起界面。
+//   本地那一套里"发送"只是补一条说明性消息，不会真的提问。
 
 import 'package:flutter/material.dart';
 
-import '../../models/workspace.dart';
 import '../../models/chat_session.dart';
 import '../../models/chat_turn.dart';
+import '../../models/workspace.dart';
+import '../../services/kb_client_api.dart';
 import '../../state/app_controller.dart';
+import '../../state/connection_controller.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/dsw_tokens.dart';
 import '../common/dsw_controls.dart';
@@ -29,6 +38,7 @@ class ConversationPane extends StatefulWidget {
     super.key,
     required this.controller,
     required this.viewportWidth,
+    this.connection,
   });
 
   /// 应用状态。
@@ -36,6 +46,9 @@ class ConversationPane extends StatefulWidget {
 
   /// 整个框架的宽度，用于计算正文最大宽度。
   final double viewportWidth;
+
+  /// 与 `kb_core` 的连接状态；为 `null` 时对话区走本地那一套。
+  final ConnectionController? connection;
 
   @override
   State<ConversationPane> createState() => _ConversationPaneState();
@@ -45,17 +58,66 @@ class _ConversationPaneState extends State<ConversationPane> {
   final ScrollController _scroll = ScrollController();
 
   @override
+  void initState() {
+    super.initState();
+    // 正文来自连接状态（选中的会话、正文缓存、加载中标记）；`KbAdminApp` 只在
+    // `AppController` 变化时重建，所以这里得自己跟着连接状态重建。
+    widget.connection?.addListener(_onConnectionChanged_);
+  }
+
+  @override
+  void didUpdateWidget(ConversationPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.connection != widget.connection) {
+      oldWidget.connection?.removeListener(_onConnectionChanged_);
+      widget.connection?.addListener(_onConnectionChanged_);
+    }
+  }
+
+  @override
   void dispose() {
+    widget.connection?.removeListener(_onConnectionChanged_);
     _scroll.dispose();
     super.dispose();
+  }
+
+  void _onConnectionChanged_() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final AppController controller = widget.controller;
-    final Workspace? workspace = controller.activeWorkspace;
-    final ChatSession? session = controller.activeSession;
-    final List<ChatTurn> turns = session?.turns ?? const <ChatTurn>[];
+    final ConnectionController? connection = widget.connection;
+    final bool serverMode = connection != null && connection.connected;
+
+    final String? workspaceName;
+    final String? sessionTitle;
+    final List<ChatTurn> turns;
+    final String emptyHint;
+
+    if (serverMode) {
+      workspaceName = connection.selectedServerWorkspace?.name;
+      sessionTitle = connection.selectedServerSession?.title;
+      final SessionDetailReport? detail = connection.selectedSessionDetail;
+      turns = detail == null
+          ? const <ChatTurn>[]
+          : detail.turns.map(chatTurnOf_).toList(growable: false);
+      emptyHint = connection.selectedSessionId == null
+          ? '在左侧选一个会话，或者在工作区那一行点 + 新建一个。'
+          : (connection.isLoadingDetail(connection.selectedSessionId!)
+                ? '正在读取会话…'
+                : '这个会话还没有消息。在下面输入问题，kb_core 会把它记下来。');
+    } else {
+      final Workspace? workspace = controller.activeWorkspace;
+      final ChatSession? session = controller.activeSession;
+      workspaceName = workspace?.name;
+      sessionTitle = session?.title;
+      turns = session?.turns ?? const <ChatTurn>[];
+      emptyHint = '先在左侧栏新建一个会话。';
+    }
 
     // 新消息到达后保持贴底。这里只在消息条数变化时滚动，避免生成过程中的
     // 每次增量都强制拉到底部、抢走用户向上翻阅的位置。
@@ -67,8 +129,8 @@ class _ConversationPaneState extends State<ConversationPane> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           _ConversationHeader(
-            workspace: workspace,
-            session: session,
+            workspaceName: workspaceName,
+            sessionTitle: sessionTitle,
             controller: controller,
             viewportWidth: widget.viewportWidth,
           ),
@@ -86,7 +148,7 @@ class _ConversationPaneState extends State<ConversationPane> {
                     child: ConstrainedBox(
                       constraints: BoxConstraints(maxWidth: contentWidth),
                       child: turns.isEmpty
-                          ? const _Hero()
+                          ? _Hero(hint: emptyHint)
                           : MessageList(turns: turns),
                     ),
                   ),
@@ -96,6 +158,8 @@ class _ConversationPaneState extends State<ConversationPane> {
           ),
           _ComposerSeat(
             controller: controller,
+            connection: connection,
+            serverMode: serverMode,
             viewportWidth: widget.viewportWidth,
           ),
         ],
@@ -127,17 +191,37 @@ class _ConversationPaneState extends State<ConversationPane> {
   }
 }
 
+/// 把服务端的一条消息翻成界面用的 [ChatTurn]。
+///
+/// 协议里的 `Turn` 与界面模型的字段本来就一一对应（见
+/// `abs_kb_svc_v1_desktop::content_` 的模块文档），这里只做一次机械映射；
+/// `system` / `tool` 之类的角色暂时按助手样式渲染。
+ChatTurn chatTurnOf_(TurnView turn) => ChatTurn(
+  id: turn.id,
+  role: turn.role == 'assistant' ? ChatRole.assistant : ChatRole.user,
+  text: turn.text,
+  reasoning: turn.reasoning,
+  state: switch (turn.state) {
+    'streaming' => ChatTurnState.streaming,
+    'failed' => ChatTurnState.failed,
+    _ => ChatTurnState.done,
+  },
+  notice: turn.notice.isEmpty
+      ? null
+      : ChatNotice(message: turn.notice, isError: turn.noticeIsError),
+);
+
 /// 列头。
 class _ConversationHeader extends StatelessWidget {
   const _ConversationHeader({
-    required this.workspace,
-    required this.session,
+    required this.workspaceName,
+    required this.sessionTitle,
     required this.controller,
     required this.viewportWidth,
   });
 
-  final Workspace? workspace;
-  final ChatSession? session;
+  final String? workspaceName;
+  final String? sessionTitle;
   final AppController controller;
   final double viewportWidth;
 
@@ -153,7 +237,12 @@ class _ConversationHeader extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
-          Expanded(child: _Breadcrumb(workspace: workspace, session: session)),
+          Expanded(
+            child: _Breadcrumb(
+              workspaceName: workspaceName,
+              sessionTitle: sessionTitle,
+            ),
+          ),
           const SizedBox(width: 20),
           _FilePanelToggle(
             controller: controller,
@@ -167,10 +256,10 @@ class _ConversationHeader extends StatelessWidget {
 
 /// 「工作区 / 会话」面包屑。
 class _Breadcrumb extends StatelessWidget {
-  const _Breadcrumb({required this.workspace, required this.session});
+  const _Breadcrumb({required this.workspaceName, required this.sessionTitle});
 
-  final Workspace? workspace;
-  final ChatSession? session;
+  final String? workspaceName;
+  final String? sessionTitle;
 
   @override
   Widget build(BuildContext context) {
@@ -181,7 +270,7 @@ class _Breadcrumb extends StatelessWidget {
       color: c.labelTertiary,
     );
 
-    if (workspace == null) {
+    if (workspaceName == null) {
       return Text('llm_kb', style: base.copyWith(color: c.labelPrimary));
     }
 
@@ -189,7 +278,7 @@ class _Breadcrumb extends StatelessWidget {
       children: <Widget>[
         Flexible(
           child: Text(
-            workspace!.name,
+            workspaceName!,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: base,
@@ -201,7 +290,7 @@ class _Breadcrumb extends StatelessWidget {
         ),
         Flexible(
           child: Text(
-            session?.title ?? '未选择会话',
+            sessionTitle ?? '未选择会话',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: base.copyWith(
@@ -249,24 +338,51 @@ class _FilePanelToggle extends StatelessWidget {
 class _ComposerSeat extends StatelessWidget {
   const _ComposerSeat({
     required this.controller,
+    required this.connection,
+    required this.serverMode,
     required this.viewportWidth,
   });
 
   final AppController controller;
+  final ConnectionController? connection;
+  final bool serverMode;
   final double viewportWidth;
 
   @override
   Widget build(BuildContext context) {
+    if (serverMode) {
+      final bool hasSession = connection!.selectedSessionId != null;
+      return Composer(
+        hint: hasSession ? '输入问题，Enter 发送，Shift+Enter 换行' : '先在左侧选一个会话',
+        onSend: (String text) => _sendServer(context, text),
+      );
+    }
+
     final ChatSession? session = controller.activeSession;
     final bool ready = session != null;
-
     return Composer(
       hint: ready ? '输入问题，Enter 发送，Shift+Enter 换行' : '先在工作区里新建一个会话',
-      onSend: (String text) => _send(context, text),
+      onSend: (String text) => _sendLocal(context, text),
     );
   }
 
-  void _send(BuildContext context, String text) {
+  /// 已连接：真的把问题发给 `kb_core`。
+  void _sendServer(BuildContext context, String text) {
+    final ConnectionController? conn = connection;
+    if (conn == null) {
+      return;
+    }
+    conn.ask(text).then((String error) {
+      if (error.isNotEmpty && context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error)));
+      }
+    });
+  }
+
+  /// 未连接：退回本地那一套（补一条说明性助手消息）。
+  void _sendLocal(BuildContext context, String text) {
     final AppController controller = this.controller;
     final ChatSession? session = controller.activeSession;
     if (session == null) {
@@ -274,19 +390,14 @@ class _ComposerSeat extends StatelessWidget {
     }
 
     controller.appendTurn(ChatTurn.user(text));
-
-    // 对话通道（`ws://<host>/ws/chat`，见 `kb_svc_salvo::wire`）尚未接入。
-    // 这里先补一条说明性的助手消息，把消息渲染的各条分支跑通，也避免让界面
-    // 看起来「发了没反应」。
     controller.appendTurn(
       ChatTurn(
         id: 'local-reply-${DateTime.now().microsecondsSinceEpoch}',
         role: ChatRole.assistant,
         state: ChatTurnState.done,
         notice: const ChatNotice(
-          message:
-              '对话通道尚未接入。下一阶段将通过 ws://<host>/ws/chat 连接 '
-              'kb_svc_salvo，并按 abs_llm::v1 的帧格式增量渲染回答。',
+          message: '还没有连接 kb_core：这条只在本地。连上之后提问会由服务端记录，'
+              '重新连线也还在。',
         ),
       ),
     );
@@ -295,7 +406,9 @@ class _ComposerSeat extends StatelessWidget {
 
 /// 空对话时的引导区。
 class _Hero extends StatelessWidget {
-  const _Hero();
+  const _Hero({required this.hint});
+
+  final String hint;
 
   @override
   Widget build(BuildContext context) {
@@ -329,7 +442,7 @@ class _Hero extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            '先在左下角「设置」里填好 LLM 服务的 API key，再从这里提问。',
+            hint,
             textAlign: TextAlign.center,
             style: DswTypography.body.copyWith(color: c.labelSecondary),
           ),

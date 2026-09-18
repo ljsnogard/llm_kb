@@ -15,10 +15,11 @@
 > 通信数据（15 个请求 / 11 个应答 / 9 个事件），并有单元测试与文档测试覆盖。
 > [`src/rpc_.rs`](src/rpc_.rs) 已给出**按业务域拆分的异步
 > RPC trait** 的第一批：`TrKbEndpoint`、`RpcError`、`TrHandshake`、
-> `TrWorkspaceService`、`TrSessionService`（工作区与会话的七条增删查改），并由
+> `TrWorkspaceService`、`TrSessionService`（工作区与会话的七条增删查改）、
+> `TrGeneration`（生成域，目前只有同步的 `ask`），并由
 > [`tests/rpc_contract.rs`](tests/rpc_contract.rs) 用一份 `gen_mcf2` 展开的 mock
 > 实现守住契约。
-> 其余域（设置 / 目录 / 生成 / 事件订阅）与插件侧数据（将来的 `v1::plugin`）
+> 其余域（设置 / 目录 / 事件订阅）与插件侧数据（将来的 `v1::plugin`）
 > **尚未落地**，其公开 API 属于**对外约定**，按 `AGENTS.md` 第 1 条须经团队确认后
 > 才能落到代码。
 >
@@ -126,6 +127,7 @@
 | `TrHandshake` | **应用层握手**：`hello(ClientInfo) -> ServerInfo`（协议要求的第一条请求） |
 | `TrWorkspaceService` | 工作区的增删查（3 个方法） |
 | `TrSessionService` | 会话的增删查改（4 个方法） |
+| `TrGeneration` | 生成域：目前只有同步的 `ask`（一问一答）；流式与取消待定 |
 | `TrKbService` | 上面几个的组合 trait（服务端实现与客户端代理都实现它） |
 
 **两个层面的握手**（系统层消息在 [`abs_kb_core_handshake`](../abs_kb_core_handshake/)，应用层在 [`src/handshake_.rs`](src/handshake_.rs)）：
@@ -151,7 +153,10 @@
 
 **流式内容**（LLM 的增量输出）用 `abs_async_iter::{TrAsyncIterator, TrFlux}` 表达，
 而不是把增量塞进一次请求/应答里——本 crate 的 `Event` 就是这条流的元素类型。
-承载它的 `TrGeneration` / `TrEventSource` 尚未落地。
+`TrGeneration` 目前是**同步一问一答**（`ask` 回 `SessionDetail`），这是为了让
+"提问 → 落盘 → 重连可见"先跑起来；换成流式形状（以及配套的 `TrEventSource` /
+`Request::Cancel`）**属于公开协议变更，需要先拍板**，见
+[`dev-notes/kb_admin_desktop-20260918-1740.md`](../../../dev-notes/kb_admin_desktop-20260918-1740.md) §2.1。
 
 ## 5. 实现方必须遵守的契约（硬性）
 

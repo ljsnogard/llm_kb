@@ -41,7 +41,11 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use abs_kb_svc_v1_desktop::WorkspaceId;
+use abs_kb_svc_v1_desktop::{
+    AddWorkspaceRequest, AskRequest, CreateSessionRequest, LocalId, SessionDetail, SessionId,
+    SessionSummary, Turn, TurnId, TurnState, Workspace, WorkspaceId,
+};
+use abs_llm::v1::cont::Role;
 use futures_lite::future::block_on;
 use kb_client_config::{config_path, ClientConfig, ConfigError, Connection, ConnectionKind};
 use kb_client_conn_mgr::TrMayCancel;
@@ -49,6 +53,9 @@ use kb_client_conn_mgr::{connect, suggested_local_launch, ClientError, KbClient,
 
 /// 已经连上的客户端 + 它是用哪条连接方式连的。
 static CURRENT: Mutex<Option<(String, Arc<KbClient>)>> = Mutex::new(None);
+
+/// 还没连上 `kb_core` 时所有操作统一的说明。
+const NOT_CONNECTED_: &str = "还没有连接 kb_core";
 
 /// 一条连接方式的扁平视图。
 ///
@@ -194,6 +201,86 @@ pub struct SessionsReport {
 
     /// 会话列表（失败时为空）。
     pub sessions: Vec<SessionView>,
+
+    /// 失败的说明；空串表示成功。
+    pub error: String,
+}
+
+/// 新建一个工作区的结果。
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceReport {
+    /// 是否成功。
+    pub ok: bool,
+
+    /// 服务端建立的工作区（失败时是一个空视图）。
+    pub workspace: WorkspaceView,
+
+    /// 失败的说明；空串表示成功。
+    pub error: String,
+}
+
+/// 新建一个会话的结果。
+#[derive(Debug, Clone, Default)]
+pub struct SessionReport {
+    /// 是否成功。
+    pub ok: bool,
+
+    /// 服务端建立的会话摘要（失败时是一个空视图）。
+    pub session: SessionView,
+
+    /// 失败的说明；空串表示成功。
+    pub error: String,
+}
+
+/// 一次"没有返回值"的操作（删除）的结果。
+#[derive(Debug, Clone, Default)]
+pub struct OpReport {
+    /// 是否成功。
+    pub ok: bool,
+
+    /// 失败的说明；空串表示成功。
+    pub error: String,
+}
+
+/// 会话里的一条消息（扁平视图）。
+///
+/// `reasoning` / `state` / `notice` 都保留了协议里的形状，即使当前的临时模拟
+/// LLM 只产出"已完成的纯文本"——以后接上流式生成时，界面不用改数据形状。
+#[derive(Debug, Clone, Default)]
+pub struct TurnView {
+    /// 回合标识。
+    pub id: String,
+
+    /// 说话人：`user` / `assistant` / `system` / `tool`。
+    pub role: String,
+
+    /// 正文。
+    pub text: String,
+
+    /// 推理正文。
+    pub reasoning: String,
+
+    /// 生成状态：`streaming` / `done` / `failed`。
+    pub state: String,
+
+    /// 提示正文；空串表示没有提示。
+    pub notice: String,
+
+    /// 提示是不是错误。
+    pub notice_is_error: bool,
+}
+
+/// 一个会话的完整内容（摘要 + 全部消息）。
+#[derive(Debug, Clone, Default)]
+pub struct SessionDetailReport {
+    /// 是否成功。
+    pub ok: bool,
+
+    /// 会话摘要（失败时是一个空视图）。
+    pub session: SessionView,
+
+    /// 会话内的全部消息，按时间顺序。
+    pub turns: Vec<TurnView>,
 
     /// 失败的说明；空串表示成功。
     pub error: String,
@@ -356,7 +443,7 @@ pub fn connection_state() -> ConnectionState {
 pub fn list_workspaces() -> WorkspacesReport {
     let Some((_, client)) = current_() else {
         return WorkspacesReport {
-            error: "还没有连接 kb_core".to_string(),
+            error: NOT_CONNECTED_.to_string(),
             ..WorkspacesReport::default()
         };
     };
@@ -365,15 +452,7 @@ pub fn list_workspaces() -> WorkspacesReport {
     match block_on(client.list_workspaces().may_cancel_with(token)) {
         Ok(list) => WorkspacesReport {
             ok: true,
-            workspaces: list
-                .workspaces
-                .iter()
-                .map(|workspace| WorkspaceView {
-                    id: workspace.workspace_id.to_string(),
-                    name: workspace.name.clone(),
-                    path: workspace.path.clone(),
-                })
-                .collect(),
+            workspaces: list.workspaces.iter().map(workspace_view_).collect(),
             error: String::new(),
         },
         Err(error) => WorkspacesReport {
@@ -387,7 +466,7 @@ pub fn list_workspaces() -> WorkspacesReport {
 pub fn list_sessions(workspace_id: String) -> SessionsReport {
     let Some((_, client)) = current_() else {
         return SessionsReport {
-            error: "还没有连接 kb_core".to_string(),
+            error: NOT_CONNECTED_.to_string(),
             ..SessionsReport::default()
         };
     };
@@ -400,23 +479,264 @@ pub fn list_sessions(workspace_id: String) -> SessionsReport {
     ) {
         Ok(list) => SessionsReport {
             ok: true,
-            sessions: list
-                .sessions
-                .iter()
-                .map(|session| SessionView {
-                    id: session.session_id.to_string(),
-                    workspace_id: session.workspace_id.to_string(),
-                    title: session.title.clone(),
-                    updated_at_millis: session.updated_at_millis,
-                    turn_count: session.turn_count,
-                })
-                .collect(),
+            sessions: list.sessions.iter().map(session_view_).collect(),
             error: String::new(),
         },
         Err(error) => SessionsReport {
             error: describe_client_error_(&error),
             ..SessionsReport::default()
         },
+    }
+}
+
+/// 在 `kb_core` 上新建一个工作区。
+///
+/// `path` 是 **`kb_core` 所在主机上**的目录：客户端不碰自己这边的文件系统，
+/// 只把「名字 + 路径」提交给服务端，由服务端分配标识并落盘。
+pub fn add_workspace(name: String, path: String) -> WorkspaceReport {
+    let Some((_, client)) = current_() else {
+        return WorkspaceReport {
+            error: NOT_CONNECTED_.to_string(),
+            ..WorkspaceReport::default()
+        };
+    };
+
+    let token = TimeoutToken::after(client.request_timeout());
+    let request = AddWorkspaceRequest {
+        // `local_id` 只是线上往返一次的簿记字段：服务端分配完标识后，
+        // 客户端这边用不上它（真正要的是应答里的 `workspace_id`）。
+        local_id: LocalId::generate(),
+        name,
+        path,
+    };
+
+    match block_on(client.add_workspace(request).may_cancel_with(token)) {
+        Ok(workspace) => WorkspaceReport {
+            ok: true,
+            workspace: workspace_view_(&workspace),
+            error: String::new(),
+        },
+        Err(error) => WorkspaceReport {
+            error: describe_client_error_(&error),
+            ..WorkspaceReport::default()
+        },
+    }
+}
+
+/// 删除一个工作区；`kb_core` 会**级联删除**它名下的会话。
+pub fn remove_workspace(workspace_id: String) -> OpReport {
+    let Some((_, client)) = current_() else {
+        return OpReport {
+            error: NOT_CONNECTED_.to_string(),
+            ..OpReport::default()
+        };
+    };
+
+    let token = TimeoutToken::after(client.request_timeout());
+    match block_on(
+        client
+            .remove_workspace(WorkspaceId::new(workspace_id))
+            .may_cancel_with(token),
+    ) {
+        Ok(()) => OpReport {
+            ok: true,
+            error: String::new(),
+        },
+        Err(error) => OpReport {
+            error: describe_client_error_(&error),
+            ..OpReport::default()
+        },
+    }
+}
+
+/// 在某个工作区下新建一个会话。
+///
+/// `title` 为空串时由服务端推导：新会话还没有消息，因此会落到缺省标题。
+pub fn create_session(workspace_id: String, title: String) -> SessionReport {
+    let Some((_, client)) = current_() else {
+        return SessionReport {
+            error: NOT_CONNECTED_.to_string(),
+            ..SessionReport::default()
+        };
+    };
+
+    let trimmed = title.trim();
+    let request = CreateSessionRequest {
+        workspace_id: WorkspaceId::new(workspace_id),
+        local_id: LocalId::generate(),
+        title: (!trimmed.is_empty()).then(|| trimmed.to_string()),
+        // 连上之后新建的会话没有离线攒下的历史。
+        turns: Vec::new(),
+    };
+
+    let token = TimeoutToken::after(client.request_timeout());
+    match block_on(client.create_session(request).may_cancel_with(token)) {
+        Ok(session) => SessionReport {
+            ok: true,
+            session: session_view_(&session),
+            error: String::new(),
+        },
+        Err(error) => SessionReport {
+            error: describe_client_error_(&error),
+            ..SessionReport::default()
+        },
+    }
+}
+
+/// 删除一个会话。
+pub fn remove_session(workspace_id: String, session_id: String) -> OpReport {
+    let Some((_, client)) = current_() else {
+        return OpReport {
+            error: NOT_CONNECTED_.to_string(),
+            ..OpReport::default()
+        };
+    };
+
+    let token = TimeoutToken::after(client.request_timeout());
+    match block_on(
+        client
+            .remove_session(WorkspaceId::new(workspace_id), SessionId::new(session_id))
+            .may_cancel_with(token),
+    ) {
+        Ok(()) => OpReport {
+            ok: true,
+            error: String::new(),
+        },
+        Err(error) => OpReport {
+            error: describe_client_error_(&error),
+            ..OpReport::default()
+        },
+    }
+}
+
+/// 读取一个会话的完整内容（摘要 + 全部消息）。
+pub fn get_session(workspace_id: String, session_id: String) -> SessionDetailReport {
+    let Some((_, client)) = current_() else {
+        return SessionDetailReport {
+            error: NOT_CONNECTED_.to_string(),
+            ..SessionDetailReport::default()
+        };
+    };
+
+    let token = TimeoutToken::after(client.request_timeout());
+    match block_on(
+        client
+            .get_session(WorkspaceId::new(workspace_id), SessionId::new(session_id))
+            .may_cancel_with(token),
+    ) {
+        Ok(detail) => detail_report_(detail),
+        Err(error) => SessionDetailReport {
+            error: describe_client_error_(&error),
+            ..SessionDetailReport::default()
+        },
+    }
+}
+
+/// 就某个会话提问，回来后拿到**提问之后**的会话内容。
+///
+/// `kb_core` 现在跑的是**临时模拟的 LLM**：它把问题逆序输出当作回答，并把
+/// 一问一答一起落盘。所以调用方不需要再调 [`get_session`]——返回值里已经有
+/// 刚产生的两条消息。等流式生成落地后，这个入口会改成订阅事件。
+///
+/// `turn_id` 由调用方生成：这样"发出提问"到"拿到回答"之间界面也有标识可用。
+pub fn ask(
+    workspace_id: String,
+    session_id: String,
+    turn_id: String,
+    question: String,
+) -> SessionDetailReport {
+    let Some((_, client)) = current_() else {
+        return SessionDetailReport {
+            error: NOT_CONNECTED_.to_string(),
+            ..SessionDetailReport::default()
+        };
+    };
+
+    let token = TimeoutToken::after(client.request_timeout());
+    let request = AskRequest {
+        workspace_id: WorkspaceId::new(workspace_id),
+        session_id: SessionId::new(session_id),
+        turn_id: TurnId::new(turn_id),
+        question,
+        // `None` = 用当前生效的服务；配置域还没接，模拟 LLM 不看它。
+        service_id: None,
+    };
+
+    match block_on(client.ask(request).may_cancel_with(token)) {
+        Ok(detail) => detail_report_(detail),
+        Err(error) => SessionDetailReport {
+            error: describe_client_error_(&error),
+            ..SessionDetailReport::default()
+        },
+    }
+}
+
+/// 把协议里的工作区翻成扁平视图。
+fn workspace_view_(workspace: &Workspace) -> WorkspaceView {
+    WorkspaceView {
+        id: workspace.workspace_id.to_string(),
+        name: workspace.name.clone(),
+        path: workspace.path.clone(),
+    }
+}
+
+/// 把协议里的会话摘要翻成扁平视图。
+fn session_view_(session: &SessionSummary) -> SessionView {
+    SessionView {
+        id: session.session_id.to_string(),
+        workspace_id: session.workspace_id.to_string(),
+        title: session.title.clone(),
+        updated_at_millis: session.updated_at_millis,
+        turn_count: session.turn_count,
+    }
+}
+
+/// 把协议里的一条消息翻成扁平视图。
+fn turn_view_(turn: &Turn) -> TurnView {
+    TurnView {
+        id: turn.turn_id.to_string(),
+        role: role_name_(&turn.role).to_string(),
+        text: turn.text.clone(),
+        reasoning: turn.reasoning.clone(),
+        state: state_name_(turn.state).to_string(),
+        notice: turn
+            .notice
+            .as_ref()
+            .map(|notice| notice.message.clone())
+            .unwrap_or_default(),
+        notice_is_error: turn
+            .notice
+            .as_ref()
+            .is_some_and(|notice| notice.is_error),
+    }
+}
+
+/// 把协议里的会话详情翻成扁平报告。
+fn detail_report_(detail: SessionDetail) -> SessionDetailReport {
+    SessionDetailReport {
+        ok: true,
+        session: session_view_(&detail.summary),
+        turns: detail.turns.iter().map(turn_view_).collect(),
+        error: String::new(),
+    }
+}
+
+/// 说话人 → 界面用的短名（`abs_llm::v1::cont::Role` 的四个取值）。
+fn role_name_(role: &Role) -> &'static str {
+    match role {
+        Role::System => "system",
+        Role::User => "user",
+        Role::Assistant => "assistant",
+        Role::Tool => "tool",
+    }
+}
+
+/// 生成状态 → 界面用的短名。
+fn state_name_(state: TurnState) -> &'static str {
+    match state {
+        TurnState::Streaming => "streaming",
+        TurnState::Done => "done",
+        TurnState::Failed => "failed",
     }
 }
 

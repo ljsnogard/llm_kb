@@ -22,9 +22,10 @@ use std::sync::{Mutex, MutexGuard};
 
 use abs_cancel::{CancelledToken, TrCancellationToken, TrMayCancel};
 use abs_kb_svc::v1::desktop::{
-    AddWorkspaceRequest, ClientInfo, CreateSessionRequest, ErrorCode, ErrorReply, PROTOCOL_VERSION,
-    RpcError, ServerInfo, SessionDetail, SessionId, SessionList, SessionSummary, TrHandshake,
-    TrKbEndpoint, TrSessionService, TrWorkspaceService, Workspace, WorkspaceId, WorkspaceList,
+    AddWorkspaceRequest, AskRequest, ClientInfo, CreateSessionRequest, ErrorCode, ErrorReply,
+    PROTOCOL_VERSION, RpcError, ServerInfo, SessionDetail, SessionId, SessionList, SessionSummary,
+    TrGeneration, TrHandshake, TrKbEndpoint, TrSessionService, TrWorkspaceService, Workspace,
+    WorkspaceId, WorkspaceList,
 };
 use gen_mcf2::gen_may_cancel_future;
 use kb_svc_servo_ipc::{Client, Listener, ServoIpcError};
@@ -268,6 +269,38 @@ where
     Ok(())
 }
 
+/// 服务端：回答一次提问。
+///
+/// 本文件只验证**通道**：这里刻意不做任何 LLM 模拟（那属于 `kb_core` 的业务），
+/// 只把当前会话原样回给客户端，证明 `Request::Ask` 会被派发到 `TrGeneration`。
+#[gen_may_cancel_future(Ask)]
+async fn ask_async<'s, C>(
+    service: &'s TestService,
+    request: AskRequest,
+    cancel: C,
+) -> Result<SessionDetail, RpcError<ServoIpcError>>
+where
+    C: TrCancellationToken,
+{
+    if cancel.is_cancelled() {
+        return Err(RpcError::Transport(ServoIpcError::Cancelled));
+    }
+    match lock_(&service.inner_)
+        .sessions_
+        .get(&(
+            request.workspace_id.to_string(),
+            request.session_id.to_string(),
+        ))
+        .cloned()
+    {
+        Some(detail) => Ok(detail),
+        None => business_(
+            ErrorCode::NotFound,
+            format!("会话不存在: {}", request.session_id),
+        ),
+    }
+}
+
 /// 服务端：应用层握手（版本不匹配就明确拒绝）。
 #[gen_may_cancel_future(Hello)]
 async fn hello_async<'s, C>(
@@ -380,6 +413,17 @@ impl TrSessionService for TestService {
     }
 }
 
+impl TrGeneration for TestService {
+    type Ask<'f>
+        = AskAsync<'f, 'f>
+    where
+        Self: 'f;
+
+    fn ask<'f>(&'f self, request: AskRequest) -> Self::Ask<'f> {
+        AskAsync::new(self, request)
+    }
+}
+
 // ============================================================================
 // 测试脚手架
 // ============================================================================
@@ -487,6 +531,44 @@ fn round_trip_covers_workspace_and_session_crud_() {
     block_on_(client.remove_workspace(workspace.workspace_id.clone())).expect("删工作区应当成功");
     let listed = block_on_(client.list_workspaces()).expect("再列工作区应当成功");
     assert!(listed.workspaces.is_empty());
+
+    drop(client);
+    server.join().expect("服务端线程应当正常结束");
+}
+
+/// 测试 `Ask` 会被派发到生成域，并按 `Reply::SessionDetail` 回来。
+///
+/// - 手段：起服务端，建工作区与会话，然后发一条 `Request::Ask`。
+/// - 判断：拿到的会话详情的摘要与建会话时一致——说明 `Ask` 没有被兜底分支
+///   当成"未实现"（那会返回 `BadRequest`），而是真的走到了 `TrGeneration::ask`，
+///   并且应答按 `SessionDetail` 解码回来。
+#[test]
+fn ask_is_dispatched_to_the_generation_domain_() {
+    let (_guard, runtime) = temp_runtime_();
+    let server = spawn_server_(runtime.clone(), 1);
+    let client = Client::connect(&runtime).expect("应当能连上服务端");
+
+    let workspace =
+        block_on_(client.add_workspace(add_request_("问答"))).expect("建工作区应当成功");
+    let session = block_on_(client.create_session(CreateSessionRequest {
+        workspace_id: workspace.workspace_id.clone(),
+        local_id: "l-ask".into(),
+        title: Some("第一问".to_string()),
+        turns: Vec::new(),
+    }))
+    .expect("建会话应当成功");
+
+    let detail = block_on_(client.ask(AskRequest {
+        workspace_id: workspace.workspace_id.clone(),
+        session_id: session.session_id.clone(),
+        turn_id: "t-1".into(),
+        question: "你好".to_string(),
+        service_id: None,
+    }))
+    .expect("提问应当成功");
+
+    assert_eq!(detail.summary.session_id, session.session_id);
+    assert_eq!(detail.summary.title, "第一问");
 
     drop(client);
     server.join().expect("服务端线程应当正常结束");

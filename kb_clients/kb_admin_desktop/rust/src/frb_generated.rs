@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 323047148;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -345035108;
 
 // Section: executor
 
@@ -47,6 +47,81 @@ flutter_rust_bridge::frb_generated_default_handler!();
 
 // Section: wire_funcs
 
+fn wire__crate__api__kb__add_workspace_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "add_workspace",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_name = <String>::sse_decode(&mut deserializer);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::kb::add_workspace(api_name, api_path))?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__kb__ask_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "ask",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_workspace_id = <String>::sse_decode(&mut deserializer);
+            let api_session_id = <String>::sse_decode(&mut deserializer);
+            let api_turn_id = <String>::sse_decode(&mut deserializer);
+            let api_question = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::kb::ask(
+                        api_workspace_id,
+                        api_session_id,
+                        api_turn_id,
+                        api_question,
+                    ))?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__kb__config_file_path_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -338,6 +413,41 @@ fn wire__crate__api__kb__connection_view_default_impl(
         },
     )
 }
+fn wire__crate__api__kb__create_session_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "create_session",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_workspace_id = <String>::sse_decode(&mut deserializer);
+            let api_title = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok =
+                        Ok::<_, ()>(crate::api::kb::create_session(api_workspace_id, api_title))?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__kb__disconnect_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -366,6 +476,43 @@ fn wire__crate__api__kb__disconnect_impl(
                     let output_ok = Ok::<_, ()>({
                         crate::api::kb::disconnect();
                     })?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__kb__get_session_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "get_session",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_workspace_id = <String>::sse_decode(&mut deserializer);
+            let api_session_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::kb::get_session(
+                        api_workspace_id,
+                        api_session_id,
+                    ))?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -469,6 +616,109 @@ fn wire__crate__api__kb__load_config_impl(
         },
     )
 }
+fn wire__crate__api__kb__op_report_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "op_report_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::kb::OpReport::default())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__kb__remove_session_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remove_session",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_workspace_id = <String>::sse_decode(&mut deserializer);
+            let api_session_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::kb::remove_session(
+                        api_workspace_id,
+                        api_session_id,
+                    ))?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__kb__remove_workspace_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remove_workspace",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_workspace_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok =
+                        Ok::<_, ()>(crate::api::kb::remove_workspace(api_workspace_id))?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__kb__save_config_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -501,6 +751,70 @@ fn wire__crate__api__kb__save_config_impl(
                         api_default_name,
                         api_connections,
                     ))?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__kb__session_detail_report_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "session_detail_report_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::kb::SessionDetailReport::default())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__kb__session_report_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "session_report_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::kb::SessionReport::default())?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -599,6 +913,70 @@ fn wire__crate__api__kb__suggested_local_connection_impl(
                 transform_result_sse::<_, ()>((move || {
                     let output_ok =
                         Ok::<_, ()>(crate::api::kb::suggested_local_connection(api_name))?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__kb__turn_view_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "turn_view_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::kb::TurnView::default())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__kb__workspace_report_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "workspace_report_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::kb::WorkspaceReport::default())?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -820,6 +1198,18 @@ impl SseDecode for Vec<crate::api::kb::SessionView> {
     }
 }
 
+impl SseDecode for Vec<crate::api::kb::TurnView> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::kb::TurnView>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::kb::WorkspaceView> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -829,6 +1219,48 @@ impl SseDecode for Vec<crate::api::kb::WorkspaceView> {
             ans_.push(<crate::api::kb::WorkspaceView>::sse_decode(deserializer));
         }
         return ans_;
+    }
+}
+
+impl SseDecode for crate::api::kb::OpReport {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_ok = <bool>::sse_decode(deserializer);
+        let mut var_error = <String>::sse_decode(deserializer);
+        return crate::api::kb::OpReport {
+            ok: var_ok,
+            error: var_error,
+        };
+    }
+}
+
+impl SseDecode for crate::api::kb::SessionDetailReport {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_ok = <bool>::sse_decode(deserializer);
+        let mut var_session = <crate::api::kb::SessionView>::sse_decode(deserializer);
+        let mut var_turns = <Vec<crate::api::kb::TurnView>>::sse_decode(deserializer);
+        let mut var_error = <String>::sse_decode(deserializer);
+        return crate::api::kb::SessionDetailReport {
+            ok: var_ok,
+            session: var_session,
+            turns: var_turns,
+            error: var_error,
+        };
+    }
+}
+
+impl SseDecode for crate::api::kb::SessionReport {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_ok = <bool>::sse_decode(deserializer);
+        let mut var_session = <crate::api::kb::SessionView>::sse_decode(deserializer);
+        let mut var_error = <String>::sse_decode(deserializer);
+        return crate::api::kb::SessionReport {
+            ok: var_ok,
+            session: var_session,
+            error: var_error,
+        };
     }
 }
 
@@ -864,6 +1296,28 @@ impl SseDecode for crate::api::kb::SessionsReport {
     }
 }
 
+impl SseDecode for crate::api::kb::TurnView {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <String>::sse_decode(deserializer);
+        let mut var_role = <String>::sse_decode(deserializer);
+        let mut var_text = <String>::sse_decode(deserializer);
+        let mut var_reasoning = <String>::sse_decode(deserializer);
+        let mut var_state = <String>::sse_decode(deserializer);
+        let mut var_notice = <String>::sse_decode(deserializer);
+        let mut var_noticeIsError = <bool>::sse_decode(deserializer);
+        return crate::api::kb::TurnView {
+            id: var_id,
+            role: var_role,
+            text: var_text,
+            reasoning: var_reasoning,
+            state: var_state,
+            notice: var_notice,
+            notice_is_error: var_noticeIsError,
+        };
+    }
+}
+
 impl SseDecode for u32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -881,6 +1335,20 @@ impl SseDecode for u8 {
 impl SseDecode for () {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {}
+}
+
+impl SseDecode for crate::api::kb::WorkspaceReport {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_ok = <bool>::sse_decode(deserializer);
+        let mut var_workspace = <crate::api::kb::WorkspaceView>::sse_decode(deserializer);
+        let mut var_error = <String>::sse_decode(deserializer);
+        return crate::api::kb::WorkspaceReport {
+            ok: var_ok,
+            workspace: var_workspace,
+            error: var_error,
+        };
+    }
 }
 
 impl SseDecode for crate::api::kb::WorkspaceView {
@@ -927,32 +1395,52 @@ fn pde_ffi_dispatcher_primary_impl(
 ) {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        1 => wire__crate__api__kb__config_file_path_impl(port, ptr, rust_vec_len, data_len),
-        2 => wire__crate__api__kb__config_view_default_impl(port, ptr, rust_vec_len, data_len),
-        3 => wire__crate__api__kb__connect_report_default_impl(port, ptr, rust_vec_len, data_len),
-        4 => wire__crate__api__kb__connect_to_impl(port, ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__kb__connection_kind_description_impl(
+        1 => wire__crate__api__kb__add_workspace_impl(port, ptr, rust_vec_len, data_len),
+        2 => wire__crate__api__kb__ask_impl(port, ptr, rust_vec_len, data_len),
+        3 => wire__crate__api__kb__config_file_path_impl(port, ptr, rust_vec_len, data_len),
+        4 => wire__crate__api__kb__config_view_default_impl(port, ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__kb__connect_report_default_impl(port, ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__kb__connect_to_impl(port, ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__kb__connection_kind_description_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        6 => wire__crate__api__kb__connection_kinds_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__kb__connection_state_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__kb__connection_state_default_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__kb__connection_view_default_impl(port, ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__kb__disconnect_impl(port, ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__kb__list_sessions_impl(port, ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__kb__list_workspaces_impl(port, ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__kb__load_config_impl(port, ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__kb__save_config_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__kb__session_view_default_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__kb__sessions_report_default_impl(port, ptr, rust_vec_len, data_len),
-        17 => {
+        8 => wire__crate__api__kb__connection_kinds_impl(port, ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__kb__connection_state_impl(port, ptr, rust_vec_len, data_len),
+        10 => {
+            wire__crate__api__kb__connection_state_default_impl(port, ptr, rust_vec_len, data_len)
+        }
+        11 => wire__crate__api__kb__connection_view_default_impl(port, ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__kb__create_session_impl(port, ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__kb__disconnect_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__kb__get_session_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__kb__list_sessions_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__kb__list_workspaces_impl(port, ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__kb__load_config_impl(port, ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__kb__op_report_default_impl(port, ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__kb__remove_session_impl(port, ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__kb__remove_workspace_impl(port, ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__kb__save_config_impl(port, ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__kb__session_detail_report_default_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        23 => wire__crate__api__kb__session_report_default_impl(port, ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__kb__session_view_default_impl(port, ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__kb__sessions_report_default_impl(port, ptr, rust_vec_len, data_len),
+        26 => {
             wire__crate__api__kb__suggested_local_connection_impl(port, ptr, rust_vec_len, data_len)
         }
-        18 => wire__crate__api__kb__workspace_view_default_impl(port, ptr, rust_vec_len, data_len),
-        19 => {
+        27 => wire__crate__api__kb__turn_view_default_impl(port, ptr, rust_vec_len, data_len),
+        28 => {
+            wire__crate__api__kb__workspace_report_default_impl(port, ptr, rust_vec_len, data_len)
+        }
+        29 => wire__crate__api__kb__workspace_view_default_impl(port, ptr, rust_vec_len, data_len),
+        30 => {
             wire__crate__api__kb__workspaces_report_default_impl(port, ptr, rust_vec_len, data_len)
         }
         _ => unreachable!(),
@@ -1065,6 +1553,64 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::kb::ConnectionView>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::kb::OpReport {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.ok.into_into_dart().into_dart(),
+            self.error.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::kb::OpReport {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::kb::OpReport> for crate::api::kb::OpReport {
+    fn into_into_dart(self) -> crate::api::kb::OpReport {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::kb::SessionDetailReport {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.ok.into_into_dart().into_dart(),
+            self.session.into_into_dart().into_dart(),
+            self.turns.into_into_dart().into_dart(),
+            self.error.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::kb::SessionDetailReport
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::kb::SessionDetailReport>
+    for crate::api::kb::SessionDetailReport
+{
+    fn into_into_dart(self) -> crate::api::kb::SessionDetailReport {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::kb::SessionReport {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.ok.into_into_dart().into_dart(),
+            self.session.into_into_dart().into_dart(),
+            self.error.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::kb::SessionReport {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::kb::SessionReport>
+    for crate::api::kb::SessionReport
+{
+    fn into_into_dart(self) -> crate::api::kb::SessionReport {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::kb::SessionView {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -1104,6 +1650,49 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::kb::SessionsReport>
     for crate::api::kb::SessionsReport
 {
     fn into_into_dart(self) -> crate::api::kb::SessionsReport {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::kb::TurnView {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.role.into_into_dart().into_dart(),
+            self.text.into_into_dart().into_dart(),
+            self.reasoning.into_into_dart().into_dart(),
+            self.state.into_into_dart().into_dart(),
+            self.notice.into_into_dart().into_dart(),
+            self.notice_is_error.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::kb::TurnView {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::kb::TurnView> for crate::api::kb::TurnView {
+    fn into_into_dart(self) -> crate::api::kb::TurnView {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::kb::WorkspaceReport {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.ok.into_into_dart().into_dart(),
+            self.workspace.into_into_dart().into_dart(),
+            self.error.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::kb::WorkspaceReport
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::kb::WorkspaceReport>
+    for crate::api::kb::WorkspaceReport
+{
+    fn into_into_dart(self) -> crate::api::kb::WorkspaceReport {
         self
     }
 }
@@ -1257,6 +1846,16 @@ impl SseEncode for Vec<crate::api::kb::SessionView> {
     }
 }
 
+impl SseEncode for Vec<crate::api::kb::TurnView> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::kb::TurnView>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::kb::WorkspaceView> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1264,6 +1863,33 @@ impl SseEncode for Vec<crate::api::kb::WorkspaceView> {
         for item in self {
             <crate::api::kb::WorkspaceView>::sse_encode(item, serializer);
         }
+    }
+}
+
+impl SseEncode for crate::api::kb::OpReport {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.ok, serializer);
+        <String>::sse_encode(self.error, serializer);
+    }
+}
+
+impl SseEncode for crate::api::kb::SessionDetailReport {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.ok, serializer);
+        <crate::api::kb::SessionView>::sse_encode(self.session, serializer);
+        <Vec<crate::api::kb::TurnView>>::sse_encode(self.turns, serializer);
+        <String>::sse_encode(self.error, serializer);
+    }
+}
+
+impl SseEncode for crate::api::kb::SessionReport {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.ok, serializer);
+        <crate::api::kb::SessionView>::sse_encode(self.session, serializer);
+        <String>::sse_encode(self.error, serializer);
     }
 }
 
@@ -1287,6 +1913,19 @@ impl SseEncode for crate::api::kb::SessionsReport {
     }
 }
 
+impl SseEncode for crate::api::kb::TurnView {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.id, serializer);
+        <String>::sse_encode(self.role, serializer);
+        <String>::sse_encode(self.text, serializer);
+        <String>::sse_encode(self.reasoning, serializer);
+        <String>::sse_encode(self.state, serializer);
+        <String>::sse_encode(self.notice, serializer);
+        <bool>::sse_encode(self.notice_is_error, serializer);
+    }
+}
+
 impl SseEncode for u32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1304,6 +1943,15 @@ impl SseEncode for u8 {
 impl SseEncode for () {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {}
+}
+
+impl SseEncode for crate::api::kb::WorkspaceReport {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.ok, serializer);
+        <crate::api::kb::WorkspaceView>::sse_encode(self.workspace, serializer);
+        <String>::sse_encode(self.error, serializer);
+    }
 }
 
 impl SseEncode for crate::api::kb::WorkspaceView {

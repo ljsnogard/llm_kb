@@ -9,8 +9,9 @@
 //
 // ```text
 // ┌ 展开 ────────────────┐   ┌ 折叠 ─┐
-// │ llm_kb        [◧]   │   │  [◧] │
-// │ [  新会话        ]   │   │  [+] │
+// │ ● 主机名 ▾     [◧]   │   │  [◧] │
+// │   已连接 kb_core …   │   │  [+] │
+// │ [  新会话        ]   │   │  [◈] │
 // │ 工作区               │   │      │
 // │  ▾ 工作区 A          │   │      │
 // │     会话 1           │   │      │
@@ -18,9 +19,14 @@
 // │ [⚙ 设置]            │   │  [⚙] │
 // └──────────────────────┘   └──────┘
 // ```
+//
+// 左上角那个按钮是**主机名（花名）+ 切换 `kb_core` 的入口**：名字来自客户端
+// 自己的连接配置（`kb_client_config` 的 `Connection::name`），与握手协议无关。
+// 决策见 `dev-notes/kb_admin_desktop-20260918-1712.md` §2。
 
 import 'package:flutter/material.dart';
 
+import '../../services/kb_client_api.dart';
 import '../../state/app_controller.dart';
 import '../../state/connection_controller.dart';
 import '../../theme/app_theme.dart';
@@ -131,10 +137,13 @@ class _SidebarWide extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          _BrandRow(controller: controller),
-          _NewSessionButton(onPressed: controller.startSession),
-          if (connection != null)
-            _ConnectionBar(connection: connection!),
+          if (connection == null)
+            _BrandRow(controller: controller)
+          else
+            _HostRow(controller: controller, connection: connection!),
+          _NewSessionButton(
+            onPressed: _newSessionAction_(context, controller, connection),
+          ),
           // 连接是异步建立的（`initialize()` 在 `runApp` 之后才跑完），所以这一块
           // 必须跟着连接状态重建——否则"连上之后列表换成服务端数据"永远不发生。
           Expanded(
@@ -180,10 +189,10 @@ class _SidebarRail extends StatelessWidget {
           const SizedBox(height: 12),
           _NewSessionButton(
             collapsed: true,
-            onPressed: controller.startSession,
+            onPressed: _newSessionAction_(context, controller, connection),
           ),
           if (connection != null)
-            _ConnectionRailButton(connection: connection!),
+            _HostRailButton(connection: connection!),
           const Spacer(),
           _SettingsTrigger(
             collapsed: true,
@@ -397,12 +406,17 @@ class _SettingsTrigger extends StatelessWidget {
   }
 }
 
-/// 侧边栏里那条「连的是谁」的状态条。
+/// 左上角的「当前主机」按钮。
 ///
-/// 点它打开「连接方式」对话框；连上之后右侧有两个小按钮：刷新工作区、切换连接。
-class _ConnectionBar extends StatelessWidget {
-  const _ConnectionBar({required this.connection});
+/// - **标题**是当前连接配置里的名字（客户端自己起的花名），与握手协议无关：
+///   `kb_core` 那边不知道自己被叫什么；
+/// - 点开是一个菜单：列出所有已配置的连接方式，选中哪一条就连它（旧的连接被
+///   替换掉，`local-launch` 起的子进程也随之结束）；最后一项是「管理连接方式…」，
+///   打开原来的连接对话框。
+class _HostRow extends StatelessWidget {
+  const _HostRow({required this.controller, required this.connection});
 
+  final AppController controller;
   final ConnectionController connection;
 
   @override
@@ -411,58 +425,100 @@ class _ConnectionBar extends StatelessWidget {
     return AnimatedBuilder(
       animation: connection,
       builder: (BuildContext context, Widget? _) {
-        final (Color dot, String label, String tooltip) = connectionStatus(
-          connection,
-          context,
-        );
-        return Tooltip(
-          message: tooltip,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => showConnectionDialog(context, connection),
-            child: Container(
-              height: 30,
-              margin: const EdgeInsets.only(left: 2, right: 2, bottom: 6),
-              padding: const EdgeInsets.only(left: 8, right: 2),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: c.borderL3, width: 0.5),
+        final (Color dot, String title, String subtitle, String tooltip) =
+            _hostStatus_(connection, context);
+        final Widget body = Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          child: Row(
+            children: <Widget>[
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
               ),
-              child: Row(
-                children: <Widget>[
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      label,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: DswTypography.body.copyWith(
+                        color: c.brandText,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: DswTypography.caption.copyWith(
-                        fontSize: 12,
-                        color: c.labelSecondary,
+                        fontSize: 11,
+                        color: c.labelTertiary,
                       ),
                     ),
-                  ),
-                  if (connection.connected)
-                    DswIconButton(
-                      tooltip: '刷新工作区',
-                      onPressed: () => connection.refreshWorkspaces(),
-                      size: 24,
-                      iconSize: 14,
-                      icon: Icons.refresh,
-                    ),
-                  DswIconButton(
-                    tooltip: '连接方式',
-                    onPressed: () => showConnectionDialog(context, connection),
-                    size: 24,
-                    iconSize: 15,
-                    icon: Icons.cable_outlined,
-                  ),
-                ],
+                  ],
+                ),
+              ),
+              Icon(Icons.unfold_more, size: 14, color: c.labelTertiary),
+            ],
+          ),
+        );
+
+        return SizedBox(
+          height: 60,
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Tooltip(
+                  message: tooltip,
+                  child: _HostButton(connection: connection, child: body),
+                ),
+              ),
+              _PanelToggleButton(
+                collapsed: false,
+                onPressed: () =>
+                    controller.toggleSidebar(MediaQuery.sizeOf(context).width),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 折叠轨道上的主机入口：一个图标，颜色反映状态。
+class _HostRailButton extends StatelessWidget {
+  const _HostRailButton({required this.connection});
+
+  final ConnectionController connection;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: connection,
+      builder: (BuildContext context, Widget? _) {
+        final (Color dot, String title, _, String tooltip) = _hostStatus_(
+          connection,
+          context,
+        );
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Tooltip(
+            message: '$title（$tooltip）',
+            child: _HostButton(
+              connection: connection,
+              child: SizedBox(
+                width: DswLayout.railControlSize,
+                height: DswLayout.railControlSize,
+                child: Center(
+                  child: Icon(Icons.dns_outlined, size: 18, color: dot),
+                ),
               ),
             ),
           ),
@@ -472,46 +528,155 @@ class _ConnectionBar extends StatelessWidget {
   }
 }
 
-/// 折叠轨道上的连接入口：一个小图标，颜色反映状态。
-class _ConnectionRailButton extends StatelessWidget {
-  const _ConnectionRailButton({required this.connection});
+/// 主机按钮的交互壳：有已配置项时弹切换菜单，否则直接开连接对话框。
+class _HostButton extends StatelessWidget {
+  const _HostButton({required this.connection, required this.child});
 
   final ConnectionController connection;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: connection,
-      builder: (BuildContext context, Widget? _) {
-        final (Color dot, String label, _) = connectionStatus(connection, context);
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: DswIconButton(
-            tooltip: label,
-            onPressed: () => showConnectionDialog(context, connection),
-            size: DswLayout.railControlSize,
-            borderRadius: BorderRadius.circular(18),
-            glyph: Icon(Icons.cable_outlined, size: 18, color: dot),
+    final DswColors c = context.dsw;
+
+    if (connection.profiles.isEmpty) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => showConnectionDialog(context, connection),
+        child: child,
+      );
+    }
+
+    return PopupMenuButton<String>(
+      tooltip: '',
+      color: c.bgLayer2,
+      position: PopupMenuPosition.under,
+      onSelected: (String value) =>
+          _onHostSelected_(context, connection, value),
+      itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+        for (final ConnectionView profile in connection.profiles)
+          PopupMenuItem<String>(
+            value: 'profile:${profile.name}',
+            child: Row(
+              children: <Widget>[
+                SizedBox(
+                  width: 20,
+                  child:
+                      connection.connected &&
+                          connection.profileName == profile.name
+                      ? Icon(Icons.check, size: 14, color: c.stateSuccess)
+                      : null,
+                ),
+                Expanded(
+                  child: Text(
+                    profile.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: DswTypography.body.copyWith(
+                      fontSize: 13,
+                      color: c.labelPrimary,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  profile.kind,
+                  style: DswTypography.caption.copyWith(
+                    fontSize: 11,
+                    color: c.labelCaption,
+                  ),
+                ),
+              ],
+            ),
           ),
-        );
-      },
+        const PopupMenuDivider(),
+        const PopupMenuItem<String>(
+          value: 'manage',
+          child: Text('管理连接方式…'),
+        ),
+      ],
+      child: child,
     );
   }
 }
 
-/// 连接状态 → （圆点颜色, 一句话, 悬停提示）。
+/// 菜单选择：切换连接，或打开连接对话框。
+Future<void> _onHostSelected_(
+  BuildContext context,
+  ConnectionController connection,
+  String value,
+) async {
+  if (value == 'manage') {
+    await showConnectionDialog(context, connection);
+    return;
+  }
+
+  final String name = value.startsWith('profile:')
+      ? value.substring('profile:'.length)
+      : '';
+  for (final ConnectionView profile in connection.profiles) {
+    if (profile.name != name) {
+      continue;
+    }
+    final bool ok = await connection.connect(profile);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(connection.error.isEmpty ? '连接失败' : connection.error),
+        ),
+      );
+    }
+    return;
+  }
+}
+
+/// 「新会话」按钮该做什么。
 ///
-/// 三个形态的文案刻意都短：这条只有 30px 高，放不下更多。
-(Color, String, String) connectionStatus(
+/// - **已连接 `kb_core`**：在服务端当前选中的工作区里建一个会话（发
+///   `CreateSession`），列表会随之刷新；失败时弹一句说明。
+/// - **未连接**：退回本地那一套（`AppController`），这样没有服务端也能起界面。
+VoidCallback _newSessionAction_(
+  BuildContext context,
+  AppController controller,
+  ConnectionController? connection,
+) {
+  final ConnectionController? conn = connection;
+  if (conn == null || !conn.connected) {
+    return controller.startSession;
+  }
+  return () {
+    conn.newSessionInSelectedWorkspace().then((String error) {
+      if (error.isNotEmpty && context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error)));
+      }
+    });
+  };
+}
+
+/// 连接状态 → （圆点颜色, 标题, 副标题, 悬停提示）。
+///
+/// **标题就是"主机名"**——连接配置里用户自己起的花名；未连接时是一句占位文案。
+/// 副标题放服务端版本与"本机 / 远程"，让"我现在连的是哪一台"一眼可见。
+(Color, String, String, String) _hostStatus_(
   ConnectionController connection,
   BuildContext context,
 ) {
   final DswColors c = context.dsw;
   switch (connection.phase) {
     case ConnectionPhase.idle:
-      return (c.labelCaption, '未连接 kb_core', '点击选择连接方式');
+      return (
+        c.labelCaption,
+        '选择主机',
+        '未连接 kb_core',
+        '点击选择要连接的 kb_core',
+      );
     case ConnectionPhase.connecting:
-      return (c.stateWarn, '正在连接 kb_core…', '正在握手');
+      final String name = connection.profileName.isEmpty
+          ? '正在连接…'
+          : connection.profileName;
+      return (c.stateWarn, name, '正在连接 kb_core…', '正在握手');
     case ConnectionPhase.connected:
       final String where = connection.isLocal
           ? (connection.launchedPid > 0
@@ -520,13 +685,15 @@ class _ConnectionRailButton extends StatelessWidget {
           : '远程';
       return (
         c.stateSuccess,
-        '${connection.profileName} · kb_core ${connection.serverVersion}',
+        connection.profileName,
+        'kb_core ${connection.serverVersion} · $where',
         '已连接：$where，协议 v${connection.protocolVersion}',
       );
     case ConnectionPhase.failed:
       return (
         c.stateError,
-        '连接失败',
+        connection.profileName.isEmpty ? '连接失败' : connection.profileName,
+        '连接失败，点击切换或重试',
         connection.error.isEmpty ? '点击重试' : connection.error,
       );
   }

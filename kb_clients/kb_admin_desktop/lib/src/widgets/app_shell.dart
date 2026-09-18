@@ -117,6 +117,7 @@ class _AppShellState extends State<AppShell> {
                           Expanded(
                             child: ConversationPane(
                               controller: controller,
+                              connection: widget.connection,
                               viewportWidth: viewport,
                             ),
                           ),
