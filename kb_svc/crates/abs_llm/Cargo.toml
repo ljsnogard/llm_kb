@@ -11,6 +11,7 @@ readme = "README.md"
 abs_cancel = { workspace = true }
 abs_str = { workspace = true }
 anylr = { workspace = true }
+buffex = { workspace = true }
 mm_ptr = { workspace = true }
 
 # 临时决策（dev-notes §2.5）：只为纯数据 enum/struct 提供 serde 能力，

@@ -137,12 +137,10 @@ mod tests {
         let event = PluginEvent::Started {
             turn_id: "t1".to_string(),
             model: "deepseek-chat".to_string(),
-            capabilities: Capabilities {
-                streaming: true,
-                reasoning: true,
-                multimodal_input: false,
-                tool_calling: true,
-            },
+            capabilities:
+                Capabilities::STREAMING +
+                Capabilities::REASONING +
+                Capabilities::TOOL_CALLING,
         };
 
         let json = serde_json::to_string(&event).expect("应当能序列化");
