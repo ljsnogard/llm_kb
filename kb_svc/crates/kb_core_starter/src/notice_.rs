@@ -1,7 +1,7 @@
 //! 解析 `kb_core` 在 stdout 上打的那**一行 JSON 通知**。
 //!
-//! 通知的**类型是 [`IpcReadyNotice`]**——它属于**协议 v1**（定义在
-//! `abs_kb_svc::v1::desktop::handshake_`），不是本 crate 或 `kb_core` 私定的格式。
+//! 通知的**类型是 [`IpcReadyNotice`]**——它属于**公开协议**（定义在
+//! `abs_kb_core_handshake`），不是本 crate 或 `kb_core` 私定的格式。
 //! 发的一方（`kb_core::serve_`）与收的一方（本模块）共用同一份字段定义，
 //! 因此字段名/取值一改就是编译错误，而不是"跑起来才发现对端解不开"。
 //!
@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use abs_kb_svc::v1::desktop::IpcReadyNotice;
+use abs_kb_core_handshake::IpcReadyNotice;
 
 use crate::error_::LaunchError;
 

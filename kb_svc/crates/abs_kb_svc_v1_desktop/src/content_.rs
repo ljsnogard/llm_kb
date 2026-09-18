@@ -71,8 +71,8 @@ pub struct Notice {
 /// 一条消息（一问或一答）。
 ///
 /// 对应桌面客户端的 `ChatTurn`。历史消息通过
-/// [`Request::GetSession`](crate::v1::desktop::Request::GetSession) 一次性取回，
-/// 生成过程中的消息通过 [`Event`](crate::v1::desktop::Event) 增量更新。
+/// [`Request::GetSession`](crate::Request::GetSession) 一次性取回，
+/// 生成过程中的消息通过 [`Event`](crate::Event) 增量更新。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Turn {
     /// 回合标识；客户端与 `kb_core` 都以此关联一轮生成。

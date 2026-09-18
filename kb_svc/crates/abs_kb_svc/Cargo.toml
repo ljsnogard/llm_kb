@@ -2,44 +2,11 @@
 edition = "2024"
 name = "abs_kb_svc"
 version = "0.1.0"
-authors = ["lino <lino_snsalias@outlook.com>"]
 
-description = "ABStraction of KnowledgeBase SerViCe."
+description = "Stable aggregation surface over the KnowledgeBase service protocol crates."
 
 [dependencies]
-abs_llm = { path = "../abs_llm" }
+# 本 crate 只做聚合：自己不定义任何类型，只把协议 crate 摆到稳定路径下。
+# 具体协议见 `../abs_kb_svc_v1_desktop`；系统层握手见 `../abs_kb_core_handshake`。
+abs_kb_svc_v1_desktop = { path = "../abs_kb_svc_v1_desktop" }
 
-# 协议数据类型的跨进程表示。
-# 与 `abs_llm` 的临时决策（dev-notes/llm_kb-20260917-1655.md §1.4）一致：只给纯数据 enum/struct 派生，
-# 具体线上格式仍由实现 crate（`kb_svc_servo_ipc` 等）决定。
-#
-# 刻意不开 serde 的 `std`：协议类型本身不需要它。但**必须开 `alloc`**——
-# 协议里到处是 `String` / `Vec<T>` / `Option<T>`，没有 `alloc` 这些类型就没有
-# `Serialize` / `Deserialize` 实现。此前本 crate 只在 workspace 整体构建时
-# 靠别的成员（`kb_core` 的 `serde_json`）把 `std` 打开而"碰巧"能编译，
-# 单独 `cargo check -p abs_kb_svc` 会失败；这里补上 `alloc` 让它自洽。
-#
-# 另一条硬约束没变：**不能用 serde 的内部标签枚举（`#[serde(tag = ...)]`）**，
-# 见 `src/v1/desktop/mod.rs` 的说明。
-serde = { version = "1.*", default-features = false, features = ["alloc", "derive"] }
-
-# 仅用于生成 kb_core 分配的标识（`<前缀>-<uuid-v4>`）。
-uuid = { version = "1.*", features = ["v4", "fast-rng"] }
-
-[dev-dependencies]
-# `tests/rpc_contract.rs` 用它展开出一个 mock 实现，证明「手写 GAT + 宏生成的
-# future」这套形状真的可用。**库本身不依赖它**：`gen_mcf2` 只能作用于模块级
-# 自由函数，trait 里用不上，所以它不该进入 `kb_core` 的依赖链
-# （否则 `AGENTS.md` 第 4 条会连带要求 `kb_core::store_` 的方法也可取消）。
-#
-# 目前只有本 crate 用它，因此按根 `Cargo.toml` 的约定写在成员自己的
-# dev-dependencies 里；等 `kb_svc_servo_ipc` 落地后再上提为 workspace 依赖。
-gen_mcf2 = { git = "https://gitee.com/lino_snsalias/gen_mcf2.rs.git" }
-
-# 集成测试里用 `block_on` 驱动 trait 的 future。
-futures-lite = { workspace = true }
-
-# 校验协议类型在「实现候选真正使用的编解码器」上也能往返。
-# ipc-channel 0.23 用 postcard，见 dev-notes/abs_kb_svc-20260917-1254.md §3。
-postcard = { version = "1.1", default-features = false, features = ["use-std"] }
-serde_json = { version = "1.*" }

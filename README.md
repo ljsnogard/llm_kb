@@ -13,7 +13,7 @@
 
 ```text
 llm_kb/
-├── kb_svc/crates/       知识库服务本身：主进程 + 抽象层 + 传输实现
+├── kb_svc/crates/       知识库服务本身：主进程 + 协议 + 传输实现
 ├── kb_plugins/crates/   插件与配套进程：LLM 插件、跨机网关
 ├── kb_clients/          客户端应用（Flutter）
 ├── dev-notes/           开发日志：技术决策的前因后果（新记录都写这里）
@@ -30,8 +30,11 @@ llm_kb/
 | crate | 职责 | 状态 |
 | :--- | :--- | :--- |
 | `kb_core` | **主进程**（可执行文件 `kb-core`）：持有工作区与会话的存储、把按域 RPC 实现接上 IPC、常驻服务客户端 | ✅ 可跑 |
-| `abs_kb_svc` | **业务通信抽象层**：协议数据（`v1::desktop`）、按业务域拆分的异步 RPC trait（`rpc_`）、两层握手的约定（`handshake_`）。**协议的唯一出处** | ✅ 首批域 |
-| `kb_svc_servo_ipc` | 上面那套抽象的**传输实现**：ipc-channel 的引导、三通道连接、客户端代理、服务端派发 | ✅ 可跑 |
+| `abs_kb_svc` | **协议聚合层**：把各协议 crate 挂到稳定的 `abs_kb_svc::v1::desktop::*` 路径下，**自己不定类型** | ✅ |
+| `abs_kb_svc_v1_desktop` | **协议 v1 桌面端**：`kb_admin_desktop` × `kb_core` 的数据（15 请求 / 11 应答 / 9 事件）、按业务域拆分的异步 RPC trait、应用层握手。**协议内容的唯一出处** | ✅ 首批域 |
+| `abs_kb_core_handshake` | **系统层握手**：`kb_core` 用 `--handshake-prompt=stdio` 公布的 `IpcReadyNotice`（启动方据此找到 IPC 端点） | ✅ |
+| `kb_core_starter` | 启动 `kb_core` 子进程并**异步**等它公布 IPC 端点文件名的可取消 future；rproxy 与客户端共用 | ✅ |
+| `kb_svc_servo_ipc` | 上面那套协议的**传输实现**：ipc-channel 的引导、三通道连接、客户端代理、服务端派发 | ✅ 可跑 |
 | `abs_llm` | LLM 的**语义抽象**：对话角色、增量输出、用量、能力集等与 provider 无关的词汇 | ✅ |
 | `kb_svc_salvo` | 第一版基于 Salvo + HTTP/WebSocket 的实现 | ❌ **已废弃**，待删（仅作历史资料） |
 
@@ -54,7 +57,9 @@ llm_kb/
 ```text
 kb_admin_desktop / 远程客户端
       │ ① 系统层握手：找到端点（本机看 IPC 端点文件；跨机连 rproxy 的 TCP 端口）
-      │ ② 应用层握手：Request::Hello → Reply::Hello        ← abs_kb_svc 的协议
+      │    消息 = abs_kb_core_handshake 的 IpcReadyNotice
+      │ ② 应用层握手：Request::Hello → Reply::Hello
+      │    消息 = abs_kb_svc_v1_desktop 的协议（经 abs_kb_svc 聚合）
       ▼
   kb_core_rproxy（可选：只有跨机时才需要）
       │ TCP 帧 = [u32 长度][种类][postcard]，上行经有界环形缓冲做背压
@@ -68,7 +73,9 @@ kb_admin_desktop / 远程客户端
       ◄──────── ReplyEnvelope ────────────┘
 ```
 
-- **协议**（数据、trait、握手语义）只在 `abs_kb_svc` 定义；换传输只换实现 crate。
+- **协议**（数据、trait、握手语义）只在协议 crate 里定义——
+  `abs_kb_svc_v1_desktop`（应用层与业务）与 `abs_kb_core_handshake`（系统层）；
+  `abs_kb_svc` 只是把它们聚合到稳定路径下。换传输只换实现 crate。
 - 两条链路的细节：本机 IPC 见 `kb_svc_servo_ipc` 的 crate 文档，
   跨机见 `kb_core_rproxy` 的 README。
 
@@ -100,9 +107,12 @@ kb_admin_desktop / 远程客户端
 
 ## 6. 文档在哪
 
-- `kb_svc/crates/abs_kb_svc/README.md`：业务通信抽象层的定位、契约与接口形状；
-  协议数据见 `abs_kb_svc/src/v1/desktop/`，两层握手见 `handshake_.rs`。
+- `kb_svc/crates/abs_kb_svc_v1_desktop/README.md`：协议 v1 的定位、契约与接口形状；
+  数据见 `abs_kb_svc_v1_desktop/src/`。
+- `kb_svc/crates/abs_kb_core_handshake/README.md`：系统层握手（`IpcReadyNotice`）。
+- `kb_svc/crates/abs_kb_svc/README.md`：聚合层的用途与"什么时候不必经过它"。
 - `kb_svc/crates/kb_core/README.md`：主进程的操作手册（命令行、存储布局、实测命令）。
 - `kb_plugins/crates/kb_core_rproxy/README.md`：跨机网关的用法与能力边界。
+- `kb_svc/crates/kb_core_starter/README.md`：启动 `kb_core` 并等 IPC 端点的那个 crate。
 - `dev-notes/`：技术决策的前因后果与开放事项，索引见
   [`dev-notes/llm_kb-20260917-1655.md`](dev-notes/llm_kb-20260917-1655.md)。

@@ -1,10 +1,10 @@
 //! `kb_svc_servo_ipc` 的**端到端**测试：真起一个服务端、真按 ipc-channel 走线。
 //!
-//! 与 `abs_kb_svc/tests/rpc_contract.rs` 的分工：
+//! 与 `abs_kb_svc_v1_desktop/tests/rpc_contract.rs` 的分工：
 //!
 //! | 文件 | 验证什么 |
 //! | :--- | :--- |
-//! | `rpc_contract.rs`（在 `abs_kb_svc`） | trait 的形状对不对、mock 直接调用语义对不对 |
+//! | `rpc_contract.rs`（在 `abs_kb_svc_v1_desktop`） | trait 的形状对不对、mock 直接调用语义对不对 |
 //! | 本文件 | **跨进程通道**这一段：引导、三条通道、请求/应答、业务错误、取消、多客户端 |
 //!
 //! 服务端与客户端在同一个进程里（不同线程），但走的是真实的 ipc-channel

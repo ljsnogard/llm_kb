@@ -1,7 +1,7 @@
 //! `kb_core` 主动推给客户端的事件。
 //!
 //! 事件不与请求关联，且**可能被丢弃**（例如界面卡顿时）：
-//! 需要可靠送达的内容应当放进 [`Reply`](crate::v1::desktop::Reply)。
+//! 需要可靠送达的内容应当放进 [`Reply`](crate::Reply)。
 //!
 //! # 一轮生成的完整序列
 //!
@@ -113,7 +113,7 @@ pub struct SessionChanged {
 ///
 /// ```
 /// use abs_llm::v1::cont::LogicOutput;
-/// use abs_kb_svc::v1::desktop::{Event, TextDelta, TurnId};
+/// use abs_kb_svc_v1_desktop::{Event, TextDelta, TurnId};
 ///
 /// let event = Event::Delta(TextDelta {
 ///     turn_id: TurnId::new("t-1"),

@@ -1,0 +1,17 @@
+[package]
+edition = "2024"
+name = "abs_kb_core_handshake"
+version = "0.1.0"
+
+description = "System-layer handshake: the notice `kb_core` prints on stdout to announce its IPC endpoint."
+
+[dependencies]
+# 协议类型的序列化。与 `abs_kb_svc_v1_desktop` 同样的约定：不开 `std`
+# （协议类型本身不需要它），但必须开 `alloc`——通知里有 `String`。
+serde = { version = "1.*", default-features = false, features = ["alloc", "derive"] }
+
+[dev-dependencies]
+# 校验线格式，以及「非自描述编解码器」（postcard）上的往返。
+postcard = { version = "1.1", default-features = false, features = ["use-std"] }
+serde_json = { version = "1.*" }
+

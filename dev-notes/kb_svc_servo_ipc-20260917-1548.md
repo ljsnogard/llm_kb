@@ -7,7 +7,7 @@
     事件通道**第一步就开**；
   - **§3 的 trait 签名已复核通过并落地**：`TrKbEndpoint` / `RpcError` /
     `TrWorkspaceService` / `TrSessionService` / `TrKbService` 已在
-    `kb_svc/crates/abs_kb_svc/src/v1/desktop/rpc_.rs`；
+    `kb_svc/crates/abs_kb_svc_v1_desktop/src/rpc_.rs`；
     §3.4 的其余域（设置 / 目录 / 握手 / 生成 / 事件）仍待补；
   - **§3 的落地顺序已走完第 3、4、5 步**：`kb_svc_servo_ipc` 已建，
     `kb_core` 已接上并在真实存储上跑通一轮增删查改；
@@ -19,7 +19,7 @@
     异步 RPC 设计、待决策项清单；
   - [`kb_core-20260917-1527.md`](kb_core-20260917-1527.md)：已完成的地基
     （compio + 本地文件存储 + 临时 CRUD 命令行）；
-  - `kb_svc/crates/abs_kb_svc/README.md` §5（实现方契约）与 §10（尚未确定的事项）。
+  - `kb_svc/crates/abs_kb_svc_v1_desktop/README.md` §5（实现方契约）与 §10（尚未确定的事项）。
 
 ---
 
@@ -81,9 +81,9 @@ TRAIT-SPIKE-DONE
 | 结论 | 落位（都被跟踪） | 守着它的测试 |
 | :--- | :--- | :--- |
 | 引导 = 重建端点 + 重发名字 + 客户端重试 | `kb_svc_servo_ipc/src/{rendezvous_,listener_}.rs`、`src/lib.rs` 的模块文档 | `kb_svc_servo_ipc/tests/round_trip.rs::client_retries_until_the_server_publishes_`、`::a_second_client_is_served_after_the_first_disconnects_` |
-| 应用层握手必须真的走一遍（含版本校验） | `abs_kb_svc/src/v1/desktop/handshake_.rs`、`kb_core/src/ipc_.rs` | `kb_svc_servo_ipc/tests/round_trip.rs::application_handshake_round_trips_and_rejects_version_mismatch_` |
-| `gen_mcf2` 不能写进 trait ⇒ 手写 GAT | `abs_kb_svc/src/v1/desktop/rpc_.rs` 的模块文档 | `abs_kb_svc/tests/rpc_contract.rs`（用同一套写法，形状不对就编译不过） |
-| 阻塞不得进入异步执行器 | `abs_kb_svc/README.md` §5 第 1、2 条 | **没有**直接回归测试，见下 |
+| 应用层握手必须真的走一遍（含版本校验） | `abs_kb_svc_v1_desktop/src/handshake_.rs`、`kb_core/src/ipc_.rs` | `kb_svc_servo_ipc/tests/round_trip.rs::application_handshake_round_trips_and_rejects_version_mismatch_` |
+| `gen_mcf2` 不能写进 trait ⇒ 手写 GAT | `abs_kb_svc_v1_desktop/src/rpc_.rs` 的模块文档 | `abs_kb_svc_v1_desktop/tests/rpc_contract.rs`（用同一套写法，形状不对就编译不过） |
+| 阻塞不得进入异步执行器 | `abs_kb_svc_v1_desktop/README.md` §5 第 1、2 条 | **没有**直接回归测试，见下 |
 
 > "执行器不被饿死"这一条目前只靠**文档与约定**：当时那个"等待期间跑计时器、
 > 数它走了多少步"的做法完全可以写成一条常驻回归测试，但**尚未做**。
@@ -183,7 +183,7 @@ GAT 并约束到 `TrMayCancel`）。因此：
 ## 3. 已复核的 trait 签名（§3.1–§3.3 已落地）
 
 这是方案 B 的"全量按域 trait"。§3.1–§3.3 已按下面这些签名落到
-`kb_svc/crates/abs_kb_svc/src/v1/desktop/rpc_.rs` 并从 `desktop/mod.rs`
+`kb_svc/crates/abs_kb_svc_v1_desktop/src/rpc_.rs` 并从 `desktop/mod.rs`
 逐个导出（不用通配符）；§3.4 的其余域待补。
 
 > 落进代码时 `rustfmt` 会把下面那些 GAT 写法的换行收成一行（它认为折行更差），
@@ -206,7 +206,7 @@ pub trait TrKbEndpoint {
 
 /// 一次 RPC 调用的失败。
 ///
-/// 刻意把两类失败分成两个**变体**（`abs_kb_svc/README.md` §5 第 7 条：
+/// 刻意把两类失败分成两个**变体**（`abs_kb_svc_v1_desktop/README.md` §5 第 7 条：
 /// 传输层错误与业务错误不得混在一个类型里），这样调用方一眼能看出
 /// "该重试还是该提示用户"。
 #[derive(Debug)]
@@ -323,10 +323,10 @@ kb_svc/crates/kb_svc_servo_ipc/
 
 | 位置 | 内容 |
 | :--- | :--- |
-| `abs_kb_svc/src/v1/desktop/rpc_.rs` | `TrKbEndpoint`、`RpcError<E>`、`TrWorkspaceService`（3 个方法）、`TrSessionService`（4 个方法） |
-| `abs_kb_svc/src/v1/desktop/error_.rs` | 给 `ErrorReply` 补 `Display` + `core::error::Error`（`RpcError::Business` 需要一个错误类型） |
-| `abs_kb_svc/src/v1/desktop/mod.rs` | 新增 `mod rpc_;`，逐个导出四个名字 |
-| `abs_kb_svc/tests/rpc_contract.rs` | 一份用 `gen_mcf2` 展开的 mock 实现 + 6 项契约测试 |
+| `abs_kb_svc_v1_desktop/src/rpc_.rs` | `TrKbEndpoint`、`RpcError<E>`、`TrWorkspaceService`（3 个方法）、`TrSessionService`（4 个方法） |
+| `abs_kb_svc_v1_desktop/src/error_.rs` | 给 `ErrorReply` 补 `Display` + `core::error::Error`（`RpcError::Business` 需要一个错误类型） |
+| `abs_kb_svc_v1_desktop/src/lib.rs` | 新增 `mod rpc_;`，逐个导出四个名字 |
+| `abs_kb_svc_v1_desktop/tests/rpc_contract.rs` | 一份用 `gen_mcf2` 展开的 mock 实现 + 6 项契约测试 |
 | `abs_kb_svc/Cargo.toml` | 直接依赖 `abs_cancel`；dev 依赖 `gen_mcf2`（**库不依赖它**）、`futures-lite` |
 
 顺带修掉一个**既有的隐性构建缺陷**：`abs_kb_svc` 的 `serde` 只开了 `derive`

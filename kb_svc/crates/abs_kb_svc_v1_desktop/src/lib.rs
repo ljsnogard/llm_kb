@@ -37,7 +37,7 @@
 //! | `rpc_` | **按业务域拆分的异步 RPC trait**（`TrWorkspaceService` 等） |
 //!
 //! 导出由本文件统一控制：子模块是私有的，`pub use` 决定对外可见的名字，
-//! 因此**公开路径始终是 `abs_kb_svc::v1::desktop::<类型名>`**，
+//! 因此**公开路径始终是 `abs_kb_svc_v1_desktop::<类型名>`**，
 //! 内部的挪动不会影响使用者。
 //!
 //! # 两条贯穿全局的约定
@@ -79,7 +79,7 @@
 //! # 示例
 //!
 //! ```
-//! use abs_kb_svc::v1::desktop::{AskRequest, Request, RequestEnvelope, ServiceId, TurnId};
+//! use abs_kb_svc_v1_desktop::{AskRequest, Request, RequestEnvelope, ServiceId, TurnId};
 //!
 //! // 一次提问
 //! let request = Request::Ask(AskRequest {

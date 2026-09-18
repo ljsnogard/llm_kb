@@ -6,8 +6,8 @@
 //!
 //! - 每个工作区有自己的 [`WorkspaceId`]、每个会话有自己的 [`SessionId`]，**由 `kb_core` 分配**；
 //! - 任何客户端都可以**先在本地创建**它们：此时它只能拿到 [`LocalId`]，
-//!   直到同步（[`Request::AddWorkspace`](crate::v1::desktop::Request::AddWorkspace)
-//!   / [`Request::CreateSession`](crate::v1::desktop::Request::CreateSession)）时
+//!   直到同步（[`Request::AddWorkspace`](crate::Request::AddWorkspace)
+//!   / [`Request::CreateSession`](crate::Request::CreateSession)）时
 //!   才由 `kb_core` 分配真正的标识；
 //! - 同步的顺序是**先工作区、后会话**：`CreateSession` 需要 `workspace_id`，
 //!   而那个标识只能来自工作区同步的结果。
@@ -15,14 +15,14 @@
 //! # 为什么是扁平结构
 //!
 //! 与客户端的 `Workspace`（内嵌 `sessions`）不同，协议里的 [`Workspace`] **不含**会话。
-//! 会话通过 [`Request::ListSessions`](crate::v1::desktop::Request::ListSessions) 按需拉取，
+//! 会话通过 [`Request::ListSessions`](crate::Request::ListSessions) 按需拉取，
 //! 避免每次列工作区都把整棵历史树传一遍；"工作区 → 会话 → 消息"的树由客户端自己组装。
 //!
 //! # "当前选中"不属于这里
 //!
 //! "当前停在哪个工作区 / 哪个会话"是**每个客户端各自的界面状态**（多窗口时会不同），
 //! 因此不上传。相反，"当前生效的 LLM 服务"是服务端状态，见
-//! [`ServerState::active_service`](crate::v1::desktop::ServerState::active_service)。
+//! [`ServerState::active_service`](crate::ServerState::active_service)。
 
 use serde::{Deserialize, Serialize};
 
@@ -90,7 +90,7 @@ pub struct SessionList {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v1::desktop::{LocalId, TurnState};
+    use crate::{LocalId, TurnState};
 
     /// 测试工作区同步的"请求带临时标识、应答带真实标识"这一配对关系。
     ///

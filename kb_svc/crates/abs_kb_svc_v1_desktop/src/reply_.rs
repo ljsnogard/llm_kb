@@ -1,6 +1,6 @@
 //! `kb_core` → 客户端的应答。
 //!
-//! 每个变体与 [`Request`](crate::v1::desktop::Request) 一一对应；
+//! 每个变体与 [`Request`](crate::Request) 一一对应；
 //! [`Reply::Ack`] 用于"成功但没有内容"的请求（删除、切换生效服务等）。
 //! 业务错误走 [`Reply::Error`]。
 
@@ -16,7 +16,7 @@ use super::workspace_::{SessionDetail, SessionList, SessionSummary, Workspace, W
 /// `kb_core` 对某个请求的应答。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Reply {
-    /// [`Request::Hello`](crate::v1::desktop::Request::Hello) 的应答。
+    /// [`Request::Hello`](crate::Request::Hello) 的应答。
     Hello(ServerInfo),
 
     /// 成功，且没有需要返回的内容。
@@ -70,7 +70,7 @@ pub enum Reply {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v1::desktop::{ErrorCode, SessionId, WorkspaceId};
+    use crate::{ErrorCode, SessionId, WorkspaceId};
 
     /// 测试"本地创建 → 服务端分配标识"的配对在应答里可还原。
     ///

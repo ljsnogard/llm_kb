@@ -37,12 +37,12 @@ pub enum ErrorCode {
 
 /// 一条业务错误应答。
 ///
-/// 作为 [`Reply::Error`](crate::v1::desktop::Reply::Error) 的载荷返回给请求方；
+/// 作为 [`Reply::Error`](crate::Reply::Error) 的载荷返回给请求方；
 /// 与生成过程相关、需要主动推送的错误另外走
-/// [`Event::Error`](crate::v1::desktop::Event::Error)。
+/// [`Event::Error`](crate::Event::Error)。
 ///
 /// 它同时实现 [`core::error::Error`]，这样按域 RPC trait 可以直接拿它当
-/// "业务失败"那一个分支（见 [`RpcError::Business`](crate::v1::desktop::RpcError::Business)），
+/// "业务失败"那一个分支（见 [`RpcError::Business`](crate::RpcError::Business)），
 /// 而不必为每种实现再包一层。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorReply {

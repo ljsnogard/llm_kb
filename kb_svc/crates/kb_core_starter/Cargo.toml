@@ -13,10 +13,14 @@ description = "Start a `kb_core` process and asynchronously wait for the IPC end
 abs_cancel = { workspace = true }
 gen_mcf2 = { workspace = true }
 
-# 系统层握手的**消息类型**：`IpcReadyNotice` 是协议 v1 的一部分，定义在
-# `abs_kb_svc::v1::desktop::handshake_`。发的一方（`kb_core`）与收的一方
-# （本 crate）共用它，字段名改动会编译不过，而不是跑起来才发现。
-abs_kb_svc = { path = "../abs_kb_svc" }
+# 系统层握手的**消息类型**：`IpcReadyNotice` 是公开协议，定义在
+# `abs_kb_core_handshake`。发的一方（`kb_core`）与收的一方（本 crate）共用它，
+# 字段名改动会编译不过，而不是跑起来才发现。
+#
+# 刻意**不**依赖 `abs_kb_svc` / `abs_kb_svc_v1_desktop`：本 crate 只需要
+# "端点就绪"这一条消息，不该把工作区 / 会话 / 服务那整套业务协议（以及它们背后的
+# `abs_llm` 等）拖进调用方的依赖树。这也是系统层通知单独成 crate 的理由。
+abs_kb_core_handshake = { path = "../abs_kb_core_handshake" }
 
 # 完成量：把「阻塞读一行」收敛到专职线程上，future 里只轮询它。
 futures-channel = "0.3"

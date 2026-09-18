@@ -41,7 +41,7 @@
 //!   把 LocalId 换成 WorkspaceId，此后一律用服务端标识
 //! ```
 //!
-//! 同理，会话通过 [`CreateSession`](crate::v1::desktop::Request::CreateSession)
+//! 同理，会话通过 [`CreateSession`](crate::Request::CreateSession)
 //! 同步时由 `kb_core` 分配 [`SessionId`]。**`LocalId` 只在同步之前有意义**：
 //! 同步完成（或该对象被丢弃）之后不应当再出现在任何消息里。
 //!
@@ -69,7 +69,7 @@ macro_rules! string_id {
             /// # Examples
             ///
             /// ```
-            #[doc = concat!("use abs_kb_svc::v1::desktop::", stringify!($name), ";")]
+            #[doc = concat!("use abs_kb_svc_v1_desktop::", stringify!($name), ";")]
             ///
             #[doc = concat!("let id = ", stringify!($name), "::generate();")]
             #[doc = concat!("assert!(id.as_str().starts_with(\"", $prefix, "-\"));")]

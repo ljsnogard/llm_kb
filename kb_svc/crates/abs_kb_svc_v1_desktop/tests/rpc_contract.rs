@@ -2,7 +2,7 @@
 //!
 //! 这个文件同时充当三件事：
 //!
-//! 1. 证明 [`abs_kb_svc`] 里那套「手写 GAT + `gen_mcf2` 生成的可取消 future」
+//! 1. 证明 [`abs_kb_svc_v1_desktop`] 里那套「手写 GAT + `gen_mcf2` 生成的可取消 future」
 //!    的形状真的能编译、能跑（形状本身先在
 //!    `external/ipc-channel-poc/src/trait_spike.rs` 里验证过）；
 //! 2. 给将来两个真实实现（`kb_svc_servo_ipc` 的客户端代理、`kb_core` 的服务端逻辑）
@@ -21,7 +21,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
 use abs_cancel::{CancelledToken, NonCancellableToken, TrCancellationToken, TrMayCancel};
-use abs_kb_svc::v1::desktop::{
+use abs_kb_svc_v1_desktop::{
     AddWorkspaceRequest, CreateSessionRequest, ErrorCode, ErrorReply, RpcError, SessionDetail,
     SessionId, SessionList, SessionSummary, TrKbEndpoint, TrSessionService, TrWorkspaceService,
     Workspace, WorkspaceId, WorkspaceList,
@@ -440,7 +440,7 @@ fn workspace_crud_round_trip_() {
 ///
 /// - 手段：对一个空的服务调用 `remove_workspace`。
 /// - 判断：`RpcError::Business`，其 `code` 是 `NotFound`，且 `is_transport()` 为假——
-///   这两类失败必须能被调用方区分开（`abs_kb_svc/README.md` §5 第 7 条）。
+///   这两类失败必须能被调用方区分开（`abs_kb_svc_v1_desktop/README.md` §5 第 7 条）。
 #[test]
 fn missing_workspace_is_business_error_() {
     let service = MockService::default();
@@ -464,12 +464,12 @@ fn session_crud_round_trip_() {
     let workspace = block_on_(service.add_workspace(add_request_("笔记", "/tmp/notes")))
         .expect("登记工作区应当成功");
 
-    let turn = abs_kb_svc::v1::desktop::Turn {
+    let turn = abs_kb_svc_v1_desktop::Turn {
         turn_id: "t-1".into(),
         role: abs_llm::v1::cont::Role::User,
         text: "离线时记的一句".to_string(),
         reasoning: String::new(),
-        state: abs_kb_svc::v1::desktop::TurnState::Done,
+        state: abs_kb_svc_v1_desktop::TurnState::Done,
         tool_calls: Vec::new(),
         usage: None,
         notice: None,

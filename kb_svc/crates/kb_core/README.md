@@ -66,8 +66,9 @@ kb-core --handshake-prompt stdio --runtime-dir /tmp/kb-demo/run --storage-dir /t
 ```
 
 这一行的类型是
-[`abs_kb_svc::v1::desktop::IpcReadyNotice`](../abs_kb_svc/src/v1/desktop/handshake_.rs)
-——它是**协议 v1 的一部分**，不是 `kb_core` 私定的格式。发的一方（本进程的
+[`abs_kb_core_handshake::IpcReadyNotice`](../abs_kb_core_handshake/src/system_.rs)
+（经协议聚合层也能写成 `abs_kb_svc::v1::desktop::IpcReadyNotice`）
+——它是**公开协议的一部分**，不是 `kb_core` 私定的格式。发的一方（本进程的
 [`crate::serve_`]）与收的一方（`kb_core_starter`）共用同一份字段定义，
 所以改字段名会编译不过，而不是"跑起来才发现对端解不开"。
 
@@ -75,9 +76,11 @@ kb-core --handshake-prompt stdio --runtime-dir /tmp/kb-demo/run --storage-dir /t
 
 > 这是**系统层握手**——只解决"父进程知道连哪里"。协议里还有**应用层握手**
 > （`Request::Hello` → `Reply::Hello` → `Event::Ready`），它解决"谈得成"。
-> 两个层面的消息都在 `abs_kb_svc` 里；区别只在消息之外的机制归谁
-> （挑哪种内核端点、端点放哪、失败怎么重试）。完整说明见
-> `kb_svc/crates/abs_kb_svc/src/v1/desktop/handshake_.rs` 的模块文档。
+> 两个层面的消息都是公开协议，只是定义在不同的 crate 里
+> （系统层 `abs_kb_core_handshake`、应用层 `abs_kb_svc_v1_desktop`）；
+> 区别只在消息之外的机制归谁（挑哪种内核端点、端点放哪、失败怎么重试）。
+> 完整说明见 `kb_svc/crates/abs_kb_core_handshake/` 与
+> `kb_svc/crates/abs_kb_svc_v1_desktop/src/handshake_.rs` 的模块文档。
 
 不想污染用户目录时，把两个目录都指到 `/tmp`：
 
@@ -364,7 +367,7 @@ kb_admin_desktop / 测试客户端
 业务错误（例如"工作区不存在"）在 `KbService` 里就翻成
 `RpcError::Business(ErrorReply)`，到线上是 `Reply::Error`；传输失败（对端断开）
 则走客户端的 `RpcError::Transport`。两类错误的划分见
-`kb_svc/crates/abs_kb_svc/README.md` §5 第 7 条。
+`kb_svc/crates/abs_kb_svc_v1_desktop/README.md` §5 第 7 条。
 
 ---
 
@@ -389,5 +392,7 @@ kb_admin_desktop / 测试客户端
   三个未知数的实测结论、以及本 crate 与 IPC 的分工；
 - `dev-notes/abs_kb_svc-20260917-1254.md`：IPC 选型（ipc-channel）与异步 RPC 设计；
 - `dev-notes/kb_admin_desktop-20260917-1341.md`：客户端通信需求与协议数据来源；
-- `kb_svc/crates/abs_kb_svc/README.md`：业务通信抽象层的定位、契约与接口形状；
-- `kb_svc/crates/abs_kb_svc/src/v1/desktop/mod.rs`：协议 v1 数据定义的入口。
+- `kb_svc/crates/abs_kb_svc_v1_desktop/README.md`：协议 v1 的定位、契约与接口形状；
+- `kb_svc/crates/abs_kb_svc/README.md`：协议聚合层（`abs_kb_svc::v1::desktop` 从哪来）；
+- `kb_svc/crates/abs_kb_core_handshake/README.md`：系统层握手（`IpcReadyNotice`）；
+- `kb_svc/crates/abs_kb_svc_v1_desktop/src/lib.rs`：协议 v1 数据定义的入口。

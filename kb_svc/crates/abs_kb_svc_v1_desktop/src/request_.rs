@@ -4,7 +4,7 @@
 //!
 //! 一律使用 serde 的**外部标签**（serde 默认），即 `{"Ask": {…}}`。
 //! 不能用 `#[serde(tag = "type")]`——目标传输的编解码器（postcard）不支持，
-//! 详见 [`desktop`](crate::v1::desktop) 模块文档。
+//! 详见 [`desktop`](crate) 模块文档。
 
 use serde::{Deserialize, Serialize};
 
@@ -103,7 +103,7 @@ pub struct CreateSessionRequest {
 /// # 示例
 ///
 /// ```
-/// use abs_kb_svc::v1::desktop::{Request, ServiceId};
+/// use abs_kb_svc_v1_desktop::{Request, ServiceId};
 ///
 /// let request = Request::UseService {
 ///     service_id: ServiceId::new("deepseek"),

@@ -70,8 +70,8 @@ pub struct Parsed {
 /// 启动时把 IPC 端点文件名通知给父进程的方式。
 ///
 /// 这属于**系统层握手**（"父进程怎么知道连哪里"），与应用层握手是两回事。
-/// 通知的**消息类型**是协议 v1 的一部分
-/// （`abs_kb_svc::v1::desktop::IpcReadyNotice`），本选项只决定**打不打**它。
+/// 通知的**消息类型**是公开协议的一部分
+/// （`abs_kb_core_handshake::IpcReadyNotice`），本选项只决定**打不打**它。
 /// 分工见 `abs_kb_svc::v1::desktop::handshake_` 的模块文档。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum HandshakePrompt {

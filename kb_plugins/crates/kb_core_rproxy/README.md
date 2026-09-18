@@ -55,8 +55,8 @@ cargo run -p kb_core_rproxy --example probe -- 127.0.0.1:8788
 
 | 层面 | 解决什么 | 在本 crate 里的位置 | 消息由谁定 |
 | :--- | :--- | :--- | :--- |
-| **系统层** | 找得到、连得上 | `kb_core_starter`：启动 `kb_core`，读它 stdout 上的那一行通知（异步、可取消） | **`abs_kb_svc` 的 `IpcReadyNotice`（协议 v1）**；怎么把消息送到由传输实现决定 |
-| **应用层** | 谈得成 | `main.rs`：**等真有远程客户端连上来**才发起 `Request::Hello` | `abs_kb_svc` 的协议 |
+| **系统层** | 找得到、连得上 | `kb_core_starter`：启动 `kb_core`，读它 stdout 上的那一行通知（异步、可取消） | **`abs_kb_core_handshake` 的 `IpcReadyNotice`**；怎么把消息送到由传输实现决定 |
+| **应用层** | 谈得成 | `main.rs`：**等真有远程客户端连上来**才发起 `Request::Hello` | `abs_kb_svc_v1_desktop` 的协议 |
 
 - stdio 通知**默认关闭**：只有 `--handshake-prompt=stdio` 时 `kb_core` 才会往
   stdout 打那一行；交互式跑 `kb_core` 时 stdout 保持干净；
@@ -107,5 +107,6 @@ TCP 读半 ──► buffex::circular_buff（64 KiB 有界）──► 帧解码
 ## 相关文档
 
 - `dev-notes/kb_core_rproxy-20260917-1749.md`：可行性研究与已拍板的决定；
-- `abs_kb_svc/src/v1/desktop/handshake_.rs`：两个层面握手的完整说明；
+- `abs_kb_core_handshake/README.md`：系统层握手（`IpcReadyNotice`）；
+- `abs_kb_svc_v1_desktop/src/handshake_.rs`：两个层面握手的完整说明；
 - `kb_svc/crates/kb_svc_servo_ipc/README`（crate 文档）：本机 IPC 的引导机制。

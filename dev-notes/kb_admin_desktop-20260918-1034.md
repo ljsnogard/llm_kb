@@ -50,7 +50,7 @@
 
 ### 1.1 协议层：本轮要用的东西全都已经定义好
 
-`kb_svc/crates/abs_kb_svc/src/v1/desktop/` 里已经有：
+`kb_svc/crates/abs_kb_svc_v1_desktop/src/` 里已经有：
 
 | 需要的东西 | 位置 |
 | :--- | :--- |
@@ -558,7 +558,7 @@ stdout 上**正好一行**，与 `launch_` 的解析逻辑对得上。
 
 - 1749 号记录 §7：两层握手、rproxy 的职责、放置、安全前提——本报告全部沿用；
 - 1341 号记录：客户端通信需求与协议数据来源；
-- `kb_svc/crates/abs_kb_svc/src/v1/desktop/handshake_.rs`：两个层面握手的完整说明；
+- `kb_svc/crates/abs_kb_svc_v1_desktop/src/handshake_.rs`：两个层面握手的完整说明；
 - `kb_svc/crates/kb_svc_servo_ipc/src/lib.rs`：本机 IPC 的引导（rendezvous）机制；
 - `kb_plugins/crates/kb_core_rproxy/README.md`：TCP 帧格式与当前能力边界。
 
@@ -579,7 +579,7 @@ stdout 上**正好一行**，与 `launch_` 的解析逻辑对得上。
 第 5 条的来龙去脉值得记一笔，因为它**推翻了 1749 §7.1 已经拍过的决定**：
 
 - 1749 §7.1 的原话是"系统层握手的消息格式**不进 `abs_kb_svc`**"，
-  `abs_kb_svc/README.md` 与 `handshake_.rs` 的模块文档也都是这个口径；
+  `abs_kb_svc_v1_desktop/README.md` 与 `handshake_.rs` 的模块文档也都是这个口径；
 - 但那条通知事实上是**两个进程之间的约定**：`kb_core::serve_` 用
   `serde_json::json!` 现拼，`kb_core_starter` 按字符串键现抠，**没有任何一处
   能挡住单边改名**——真正的失败模式是"跑起来发现启动不了"；
@@ -605,7 +605,7 @@ stdout 上**正好一行**，与 `launch_` 的解析逻辑对得上。
 | `kb_svc/crates/kb_core_starter/` | 新 crate（lib）。公开面：`LaunchSpec` / `Launched` / `LaunchError` / `start()` / `default_kb_core_path()` / `kb_core_beside()`；私有模块 `error_` / `launch_` / `notice_` |
 | `src/launch_.rs` | `#[gen_mcf2::gen_may_cancel_future(Start, pub)]` 展开出 `StartAsync`：`.await` 为不可取消路径，`.may_cancel_with(token).await` 为可取消路径 |
 | `src/notice_.rs` | 解析协议类型 `abs_kb_svc::v1::desktop::IpcReadyNotice`（只取 `ipc_name_file`）；纯函数，可单测 |
-| `kb_svc/crates/abs_kb_svc/src/v1/desktop/handshake_.rs` | 新增系统层握手消息：`IpcReadyNotice` + `HandshakeNoticeKind`（`event` 线上取值 `"ipc_ready"`），含 JSON 线格式与 postcard 往返测试 |
+| `kb_svc/crates/abs_kb_svc_v1_desktop/src/handshake_.rs` | 新增系统层握手消息：`IpcReadyNotice` + `HandshakeNoticeKind`（`event` 线上取值 `"ipc_ready"`），含 JSON 线格式与 postcard 往返测试 |
 | `kb_svc/crates/kb_core/src/serve_.rs` | 打通知改成用 `IpcReadyNotice` 序列化（不再是 `serde_json::json!` 现拼） |
 | `tests/launch.rs` | 集成测试：假 `kb_core` 脚本覆盖 正常 / 提前退出 / 坏通知 / 可执行文件不可用 / 已取消不起进程 / **等待中取消并结束子进程** / `kb_core_beside` |
 | `kb_plugins/crates/kb_core_rproxy/` | 删 `src/launch_.rs`（-163 行）；`main.rs` 改用 `kb_core_starter::start(&spec).await`；`Cargo.toml` 去掉 `serde_json`（只有旧 `launch_` 用它），保留 `thiserror`（`ring_` 在用） |
@@ -656,3 +656,71 @@ start(&spec) ──► StartAsync（与运行时无关的 future）
 
 §6 的第 3–5 条还没拍板（帧编解码的共享方式、客户端 rust crate 是否并入主 workspace、
 是否给 `kb_core` 加 lib target）。下一步做"远程 TCP 客户端 + 客户端配置"时，第 3、4 条会先撞上来。
+
+---
+
+## 10. 协议 crate 拆分（2026-09-18 12:20）
+
+### 10.1 拍板的三条
+
+| # | 决策 | 落位 |
+| :--- | :--- | :--- |
+| 1 | `abs_kb_svc` 里的 `v1::desktop` 拆成独立 crate | **`kb_svc/crates/abs_kb_svc_v1_desktop`** |
+| 2 | 两个层面握手里**系统层**的消息拆成独立 crate | **`kb_svc/crates/abs_kb_core_handshake`**（你写的 `abs_kv_core_handshake` 按笔误处理，落地为 `kb`） |
+| 3 | `abs_kb_svc` **保留**，但只做**聚合** | `pub mod v1 { pub use abs_kb_svc_v1_desktop as desktop; }`——一行类型都不定义 |
+
+范围上有一个刻意的取舍：**只把系统层拆出去，应用层握手与业务数据留在
+`abs_kb_svc_v1_desktop`**。原因是依赖方向——`ServerState` 带着服务列表
+（`ServiceSummary` / `ServiceId`），把它搬进"握手" crate 就得把业务类型一起搬过去，
+否则两个 crate 互相依赖。所以"握手 crate"= 那条只依赖 `serde` 的
+`IpcReadyNotice`。
+
+### 10.2 为什么系统层要单独一个 crate
+
+一句话：**只想启动并找到 `kb_core` 的调用方不该依赖整套业务协议**。
+
+`kb_core_starter` 正是这种调用方——它起进程、读一行通知就结束了。
+在拆分之前它必须依赖 `abs_kb_svc`，于是为了四个字段的通知，连带把工作区 / 会话 /
+服务那整套类型以及背后的 `abs_llm` 拖进依赖树（桌面端还要把这一切编进原生库）。
+拆开之后它的依赖只剩 `abs_kb_core_handshake`（`serde`）+ `abs_cancel` + `serde_json`。
+
+### 10.3 落位与兼容
+
+```text
+abs_kb_svc                      ← 聚合层（只有一条 pub use 别名）
+└── v1::desktop  ──别名──►  abs_kb_svc_v1_desktop
+                              ├── 应用层握手（ClientInfo / ServerInfo / PROTOCOL_VERSION / ServerState）
+                              ├── 业务数据（15 请求 / 11 应答 / 9 事件）+ 按域 RPC trait
+                              └── re-export ──► abs_kb_core_handshake
+                                                  └── 系统层握手（IpcReadyNotice / HandshakeNoticeKind）
+```
+
+- **`abs_kb_svc::v1::desktop::X` 这条路径保持不变**（含刚加的
+  `IpcReadyNotice` / `HandshakeNoticeKind`），所以 `kb_core`、
+  `kb_svc_servo_ipc`、`kb_core_rproxy` 与既有测试**一行都没改**——
+  这正是保留聚合层的目的；
+- 聚合用"别名整个 crate"而不是逐个 `pub use`：按 `AGENTS.md` 第 5 条不用通配符，
+  同时"这份清单"仍然只在新 crate 的根文件里列举一次，不会出现两份要同步的清单；
+- `abs_kb_core_handshake` 的**唯一**调用方改动是 `kb_core_starter`：直接依赖它；
+- 移动用 `git mv` 完成，`git diff` 会显示为改名 + 路径重写。
+
+### 10.4 新增文档
+
+| 文件 | 内容 |
+| :--- | :--- |
+| `kb_svc/crates/abs_kb_svc/README.md` | 聚合层：聚合出什么、为什么保留、**什么时候不必经过它** |
+| `kb_svc/crates/abs_kb_svc_v1_desktop/README.md` | 原来的 `abs_kb_svc/README.md` 整体搬过来（路径与层级章节按新布局改写） |
+| `kb_svc/crates/abs_kb_core_handshake/README.md` | 系统层：属于哪一层、为什么独立、谁发谁收、承诺什么 |
+| 根 `README.md` §2 / §3 / §6 | crate 分工表加入三个协议 crate 与 `kb_core_starter`；请求路径图标注两个层次的出处 |
+
+### 10.5 验证
+
+- `cargo test -p abs_kb_core_handshake -p abs_kb_svc_v1_desktop -p abs_kb_svc -p kb_core -p kb_core_starter`：
+  **全绿**（系统层 2 单元；桌面协议 23 单元 + 6 契约；聚合层 1 文档测试；`kb_core` 27；starter 2 + 7 + 3）；
+- `cargo check --workspace --all-targets`：无错误；
+- 拆分**没有改任何线格式**：`IpcReadyNotice` 的 JSON 与 postcard 测试原样通过。
+
+> 与本轮无关的既有告警（不是这次拆分引入的，根 `Cargo.toml` 现在没有
+> `[workspace.lints.*]`，所以它们重新显形了）：`abs_art-bridge` / `tokio` 是"声明了但
+> 没有成员使用的 workspace 依赖"；`kb_rig_llm_v1_agent` 有 4 个未使用依赖；
+> `abs_llm` 的 `try_trait_v2` 声明了但没用到。这些是清单层面的清理，另行处理。

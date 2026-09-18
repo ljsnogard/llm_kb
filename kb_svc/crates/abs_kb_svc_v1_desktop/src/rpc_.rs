@@ -100,14 +100,14 @@ pub trait TrKbEndpoint {
 
 /// 一次 RPC 调用的失败。
 ///
-/// 刻意把两类失败分成两个**变体**（`abs_kb_svc/README.md` §5 第 7 条：
+/// 刻意把两类失败分成两个**变体**（`abs_kb_svc_v1_desktop/README.md` §5 第 7 条：
 /// 传输层错误与业务错误不得混在一个类型里），这样调用方一眼能看出
 /// "该重试还是该提示用户"。
 ///
 /// # 示例
 ///
 /// ```
-/// use abs_kb_svc::v1::desktop::{ErrorCode, ErrorReply, RpcError};
+/// use abs_kb_svc_v1_desktop::{ErrorCode, ErrorReply, RpcError};
 ///
 /// /// 假装的实现方错误。
 /// #[derive(Debug)]
@@ -262,9 +262,9 @@ pub trait TrSessionService: TrKbEndpoint {
 /// **应用层握手**域：协议要求的第一条请求。
 ///
 /// 对应协议里的 `Request::Hello` / `Reply::Hello`。它与"系统层握手"的区别见
-/// [`handshake_`](crate::v1::desktop) 的模块文档：
+/// [`handshake_`](crate) 的模块文档：
 ///
-/// - 系统层解决「找得到、连得上」，消息是 [`IpcReadyNotice`](crate::v1::desktop::IpcReadyNotice)，
+/// - 系统层解决「找得到、连得上」，消息是 [`IpcReadyNotice`](crate::IpcReadyNotice)，
 ///   但**怎么把消息送到**（挑哪种内核端点、端点放哪、失败怎么重试）由传输实现决定；
 /// - 本 trait 解决「谈得成」，是**可以开始发业务请求**的分界线。
 ///

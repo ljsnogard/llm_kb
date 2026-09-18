@@ -55,7 +55,7 @@ impl ReplyEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v1::desktop::{
+    use crate::{
         AskRequest, ClientInfo, DirectoryListing, Event, LocalId, PROTOCOL_VERSION, ServerInfo,
         ServerState, ServiceId, ServiceList, SessionId, SessionSummary, TextDelta, TurnId,
         TurnState, Workspace, WorkspaceId, WorkspaceList,
@@ -99,7 +99,7 @@ mod tests {
             RequestEnvelope::new("q-4", Request::ListServices),
             RequestEnvelope::new(
                 "q-5",
-                Request::AddWorkspace(crate::v1::desktop::AddWorkspaceRequest {
+                Request::AddWorkspace(crate::AddWorkspaceRequest {
                     local_id: LocalId::new("l-1"),
                     name: "笔记".to_string(),
                     path: "/home/me/notes".to_string(),
@@ -180,11 +180,11 @@ mod tests {
                 logic: LogicOutput::Answer,
                 text: "你好".to_string(),
             }),
-            Event::TurnFinished(crate::v1::desktop::TurnFinished {
+            Event::TurnFinished(crate::TurnFinished {
                 turn_id: turn_id.clone(),
                 reason: None,
             }),
-            Event::SessionChanged(crate::v1::desktop::SessionChanged {
+            Event::SessionChanged(crate::SessionChanged {
                 summary: SessionSummary {
                     session_id: session_id.clone(),
                     workspace_id: workspace_id.clone(),
@@ -206,7 +206,7 @@ mod tests {
     ///   `postcard::from_bytes` 解码。
     /// - 判断：每一条都解码成功且与原值相等。
     ///
-    /// 这条测试守住的是 [`desktop`](crate::v1::desktop) 模块文档里那条约定：
+    /// 这条测试守住的是 [`desktop`](crate) 模块文档里那条约定：
     /// **不能使用 serde 的内部标签枚举**——postcard 不自描述，内部标签的
     /// 解码会以 "This is a feature that PostCard will never implement" 失败。
     /// 该失败只在解码侧出现（编码会"成功"地产生垃圾），因此必须用真解码来守。

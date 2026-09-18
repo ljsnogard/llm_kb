@@ -1,7 +1,7 @@
 # kb_admin_desktop × kb_core 通信需求调查
 
 - 日期：2026-09-17
-- 状态：**调查结果**。对应的数据定义已落地在 [`abs_kb_svc::v1::desktop/`](../../kb_svc/crates/abs_kb_svc/src/v1/desktop/mod.rs)。
+- 状态：**调查结果**。对应的数据定义已落地在 [`abs_kb_svc::v1::desktop/`](../../kb_svc/crates/abs_kb_svc_v1_desktop/src/lib.rs)。
 - 前置文档：[`abs_kb_svc-20260917-1254.md`](abs_kb_svc-20260917-1254.md)（选型与 `abs_kb_svc` 定位）
 
 ---
@@ -16,7 +16,7 @@
    工作区、会话与历史、目录浏览，以及握手/状态同步。
 4. 有 **3 处界面已经预留但尚未接线的能力**：流式增量渲染、取消生成按钮、
    目录浏览面板——它们决定了数据定义里必须先有对应的消息类型。
-5. 本次交付的数据定义见 [`abs_kb_svc::v1::desktop/`](../../kb_svc/crates/abs_kb_svc/src/v1/desktop/mod.rs)：
+5. 本次交付的数据定义见 [`abs_kb_svc::v1::desktop/`](../../kb_svc/crates/abs_kb_svc_v1_desktop/src/lib.rs)：
    15 个请求、11 个应答、9 个事件、6 个标识新类型，全部为纯数据 + serde 派生；
    **23 个单元测试 + 9 个文档测试通过**，`cargo clippy` 对本 crate 无告警。
 6. **工作区与会话由 `kb_core` 管理并多端同步，标识由它分配；但客户端可以本地先创建，
@@ -97,7 +97,7 @@ LocalStore.open()  →  AppController(snapshot)  →  runApp
 
 ## 4. 需要交流的数据（对照已交付的代码）
 
-定义位置：[`kb_svc/crates/abs_kb_svc/src/v1/desktop/`](../../kb_svc/crates/abs_kb_svc/src/v1/desktop/mod.rs)。
+定义位置：[`kb_svc/crates/abs_kb_svc_v1_desktop/src/`](../../kb_svc/crates/abs_kb_svc_v1_desktop/src/lib.rs)。
 下面只列"为什么需要它"，字段细节以代码为准。
 
 ### 4.1 握手与状态
@@ -194,7 +194,7 @@ LocalStore.open()  →  AppController(snapshot)  →  runApp
 
 **标识格式**：`<前缀>-<uuid-v4>`（`w-` / `s-` / `t-` / `l-` / `q-`）。
 前缀只为便于人读，接收方不得解析它——标识始终当作不透明字符串。
-生成函数集中在 [`ids_`](../../kb_svc/crates/abs_kb_svc/src/v1/desktop/ids_.rs) 里，
+生成函数集中在 [`ids_`](../../kb_svc/crates/abs_kb_svc_v1_desktop/src/ids_.rs) 里，
 避免两端各写一份格式。
 
 ### 5.2 其余差异
@@ -241,7 +241,7 @@ LocalStore.open()  →  AppController(snapshot)  →  runApp
 
 - 按**数据概念**分文件（标识 / 握手 / 消息内容 / 服务 / 工作区 / 目录 / 错误 / 三个方向的消息 / 信封），
   而不是按"类型 vs 函数"分层；
-- 目前只有 [`ids_`](../../kb_svc/crates/abs_kb_svc/src/v1/desktop/ids_.rs) 需要聚合——
+- 目前只有 [`ids_`](../../kb_svc/crates/abs_kb_svc_v1_desktop/src/ids_.rs) 需要聚合——
   那里的 `string_id!` 宏是**内部共享逻辑**，所有标识类型共用它；
 - `mod.rs` **统一控制导出**：子模块是私有的，`pub use` 决定对外名字。
   好处是公开路径始终是 `abs_kb_svc::v1::desktop::<类型名>`，
@@ -305,10 +305,10 @@ LocalStore.open()  →  AppController(snapshot)  →  runApp
 
 ## 8. 附录：交付物与验证
 
-- **代码**：`kb_svc/crates/abs_kb_svc/src/v1/desktop/`（`mod.rs` + 11 个子模块）
-  - 入口文档：[`desktop/mod.rs`](../../kb_svc/crates/abs_kb_svc/src/v1/desktop/mod.rs)
-  - 标识与本地先创建：[`ids_.rs`](../../kb_svc/crates/abs_kb_svc/src/v1/desktop/ids_.rs)
-  - postcard 兼容性的守门测试：[`envelope_.rs`](../../kb_svc/crates/abs_kb_svc/src/v1/desktop/envelope_.rs)
+- **代码**：`kb_svc/crates/abs_kb_svc_v1_desktop/src/`（`mod.rs` + 11 个子模块）
+  - 入口文档：[`desktop/mod.rs`](../../kb_svc/crates/abs_kb_svc_v1_desktop/src/lib.rs)
+  - 标识与本地先创建：[`ids_.rs`](../../kb_svc/crates/abs_kb_svc_v1_desktop/src/ids_.rs)
+  - postcard 兼容性的守门测试：[`envelope_.rs`](../../kb_svc/crates/abs_kb_svc_v1_desktop/src/envelope_.rs)
 - **验证**（在真实 workspace 内，无需任何替身）：
   - `CARGO_HOME=$PWD/external/cargo-home cargo test -p abs_kb_svc`
     ⇒ 23 个单元测试 + 9 个文档测试通过

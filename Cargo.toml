@@ -2,8 +2,13 @@
 resolver = "3"
 # 分组成员，与 README「各 crate 的分工」一节对应。
 members = [
-    # 服务端：主进程 / 通信抽象层 / 传输实现 / LLM 语义
+    # 服务端：主进程 / 协议 / 传输实现 / LLM 语义
+    #
+    # 协议按「版本 + 对端」拆成独立 crate；`abs_kb_svc` 只是**聚合层**，
+    # 让调用方继续写 `abs_kb_svc::v1::desktop::X` 而不必跟着拆分改路径。
+    "kb_svc/crates/abs_kb_core_handshake",
     "kb_svc/crates/abs_kb_svc",
+    "kb_svc/crates/abs_kb_svc_v1_desktop",
     "kb_svc/crates/abs_llm",
     "kb_svc/crates/kb_core",
     # 启动 `kb_core` 子进程并等它公布 IPC 端点文件名。它是 `kb_core` 的配套启动
@@ -29,8 +34,8 @@ members = [
 [workspace.dependencies.abs_async_iter]
 git = "https://gitee.com/lino_snsalias/abs_async_iter.git"
 
-[workspace.dependencies.abs_art-bridge]
-version = "0.2.2"
+# [workspace.dependencies.abs_art-bridge]
+# version = "0.2.2"
 
 [workspace.dependencies.abs_buff]
 git = "https://gitee.com/lino_snsalias/abs_buff.git"
@@ -91,13 +96,13 @@ default-features = false
 #
 # `tokio` 现在**只有** `kb_svc_salvo` 在用（它整体已废弃，待删除）；
 # `kb_core` 已改用上面的 `compio`。等 `kb_svc_salvo` 删除后本条目也应一并删除。
-[workspace.dependencies.tokio]
-version = "1.*"
-features = [
-    "rt-multi-thread",
-    "macros",
-    "net",
-    "sync",
-    "time",
-    "signal",
-]
+# [workspace.dependencies.tokio]
+# version = "1.*"
+# features = [
+#     "rt-multi-thread",
+#     "macros",
+#     "net",
+#     "sync",
+#     "time",
+#     "signal",
+# ]

@@ -28,7 +28,7 @@ pub const MASKED_API_KEY: &str = "••••••••";
 /// # 示例
 ///
 /// ```
-/// use abs_kb_svc::v1::desktop::ApiKeyUpdate;
+/// use abs_kb_svc_v1_desktop::ApiKeyUpdate;
 ///
 /// let keep = ApiKeyUpdate::Keep;
 /// let set = ApiKeyUpdate::Set {

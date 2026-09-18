@@ -27,7 +27,7 @@ pub enum CoreError {
 
     /// 把系统层握手通知编码成 JSON 失败。
     ///
-    /// 通知的类型是 `abs_kb_svc::v1::desktop::IpcReadyNotice`，字段全是字符串与
+    /// 通知的类型是 `abs_kb_core_handshake::IpcReadyNotice`，字段全是字符串与
     /// 整数，正常不会失败；留着它是为了不在这里 `unwrap`。
     #[error("编码 kb_core 的 stdio 通知失败: {0}")]
     Encode(#[source] serde_json::Error),

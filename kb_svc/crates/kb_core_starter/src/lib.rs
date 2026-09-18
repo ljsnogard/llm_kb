@@ -8,25 +8,26 @@
 //!        ◄──── stdout 上的一行 IpcReadyNotice（JSON）────────┘
 //! ```
 //!
-//! # 它实现 `abs_kb_svc` 里的哪一块
+//! # 它实现协议里的哪一块
 //!
-//! 只实现**系统层握手**的"发起方"这一半：起进程 + 收 [`IpcReadyNotice`]。
-//! 它**不实现**应用层握手（[`TrHandshake`] / `Request::Hello`）——那要等真正
+//! 只实现**系统层握手**的"接收方"这一半：起进程 + 收 [`IpcReadyNotice`]。
+//! 它**不实现**应用层握手（`TrHandshake` / `Request::Hello`）——那要等真正
 //! 连上之后由 IPC 或 TCP 客户端去做，而且不是每个父子关系都需要
 //! （`kb_core_rproxy` 就等到真有远程客户端时才做）。
 //!
-//! 两个层面**都是协议 v1 的公开约定**，只是分工不同：
+//! 两个层面的消息都是公开协议，只是定义在不同的 crate 里：
 //!
-//! | 层面 | 消息 | 谁实现 |
-//! | :--- | :--- | :--- |
-//! | **系统层**（找得到、连得上） | [`IpcReadyNotice`](abs_kb_svc::v1::desktop::IpcReadyNotice)（`event: "ipc_ready"`） | **本 crate**（收）+ `kb_core`（发） |
-//! | **应用层**（谈得成） | `Request::Hello` → `Reply::Hello` → `Event::Ready` | `kb_svc_servo_ipc::Client` / 将来的 TCP 客户端 |
+//! | 层面 | 消息 | 定义在 | 谁实现 |
+//! | :--- | :--- | :--- | :--- |
+//! | **系统层**（找得到、连得上） | [`IpcReadyNotice`]（`event: "ipc_ready"`） | **本 crate 依赖的 `abs_kb_core_handshake`** | 本 crate（收）+ `kb_core`（发） |
+//! | **应用层**（谈得成） | `Request::Hello` → `Reply::Hello` → `Event::Ready` | `abs_kb_svc_v1_desktop`（经 `abs_kb_svc` 聚合） | `kb_svc_servo_ipc::Client` / 将来的 TCP 客户端 |
 //!
-//! 因此本 crate 只依赖 [`abs_kb_svc`] 的**消息类型**，不依赖它的 RPC trait，
-//! 也不依赖任何 IPC / 网络实现。完整理由见 crate 根的 `README.md`。
+//! 系统层的消息单独一个 crate，正是为了让本 crate **不必依赖整套业务协议**
+//! （`abs_kb_svc_v1_desktop` 及其背后的 `abs_llm` 等）。本 crate 的依赖里只有
+//! 一个协议 crate：[`abs_kb_core_handshake`]。完整理由见 crate 根的 `README.md`。
 //!
-//! [`IpcReadyNotice`]: abs_kb_svc::v1::desktop::IpcReadyNotice
-//! [`TrHandshake`]: abs_kb_svc::v1::desktop::TrHandshake
+//! [`IpcReadyNotice`]: abs_kb_core_handshake::IpcReadyNotice
+//! [`abs_kb_core_handshake`]: abs_kb_core_handshake
 //!
 //! # 异步、可取消、与运行时无关
 //!

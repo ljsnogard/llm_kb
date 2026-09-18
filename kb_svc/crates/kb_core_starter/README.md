@@ -10,14 +10,13 @@
 它是 `kb_core` 的配套启动逻辑，属于**服务侧基础设施**，因此放在 `kb_svc/crates/`
 （`kb_core_rproxy` 那种对外提供服务的网关才放 `kb_plugins/`）。
 
-## 它实现 `abs_kb_svc` 里的哪一块
+## 它实现协议里的哪一块
 
-握手分两个层面，**两个层面的消息都是 `abs_kb_svc` 定义的公开协议**，
-但"谁实现哪一半"不同：
+握手分两个层面，**两个层面的消息都是公开协议**，但"谁实现哪一半"不同：
 
 | 层面 | 解决什么 | 消息 | 谁实现 |
 | :--- | :--- | :--- | :--- |
-| **系统层** | 找得到、连得上 | [`IpcReadyNotice`](../abs_kb_svc/src/v1/desktop/handshake_.rs)（`event: "ipc_ready"`，带 `ipc_name_file` / `protocol_version` / `pid`） | **本 crate 收**；`kb_core::serve_` 发 |
+| **系统层** | 找得到、连得上 | [`IpcReadyNotice`](../abs_kb_core_handshake/src/system_.rs)（`event: "ipc_ready"`，带 `ipc_name_file` / `protocol_version` / `pid`） | **本 crate 收**；`kb_core::serve_` 发 |
 | **应用层** | 谈得成 | `Request::Hello` → `Reply::Hello` → `Event::Ready` | `kb_svc_servo_ipc::Client`（本机 IPC）/ 将来的 TCP 客户端 |
 
 所以本 crate **只实现系统层握手的接收侧**，具体是：
@@ -32,8 +31,10 @@
 - **"怎么连上端点"**：它只把名字文件交出去，连接由调用方用
   `kb_svc_servo_ipc::Client::connect(runtime_dir)`（或远程的 TCP 客户端）完成。
 
-消息类型在 `abs_kb_svc` 而不在本 crate，是因为 `abs_kb_svc` 要保持"与传输、
-运行时无关的纯数据 + trait"；起进程、读管道这些 `std::process` 的事不能进去。
+系统层的消息类型在 [`abs_kb_core_handshake`](../abs_kb_core_handshake/) 而不在本 crate：
+那是一份只依赖 `serde` 的纯协议 crate，谁都可以依赖它；而起进程、读管道这些
+`std::process` 的事不能进协议 crate。**本 crate 的依赖里只有这一个协议 crate**，
+没有 `abs_kb_svc` / `abs_kb_svc_v1_desktop`。
 
 ## 为什么是一个独立的 crate
 
@@ -43,9 +44,9 @@
    target，外部拿不到它——留在原地就等于让桌面端复制一份。
 2. **它不属于任何单个调用方**：桌面端要起"本机的 `kb_core`"，rproxy 要起"上游的
    `kb_core`"，两边是同一件事（同一套参数、同一种收场语义）。
-3. **依赖面刻意最小**：只要 `abs_kb_svc` 的**消息类型**、`abs_cancel` 与
-   `serde_json`；**不要 compio、不要 ipc-channel**。桌面端把它编进自己的原生库时，
-   不会被拖进一个 TCP 运行时或本机 IPC 实现。
+3. **依赖面刻意最小**：只要 `abs_kb_core_handshake` 的**消息类型**、`abs_cancel` 与
+   `serde_json`；**不要 compio、不要 ipc-channel、也不要业务协议**。桌面端把它编进
+   自己的原生库时，不会被拖进一个 TCP 运行时、本机 IPC 实现或整套业务类型。
 4. **它有自己的收场语义**，值得独立测试与文档：子进程归属、取消、future 被丢弃
    三条路径必须都收敛到"不留下孤儿进程"。
 
@@ -87,7 +88,7 @@ cargo test -p kb_core_starter
 
 ## 相关文档
 
-- [`abs_kb_svc` 的 `handshake_`](../abs_kb_svc/src/v1/desktop/handshake_.rs)：
+- [`abs_kb_core_handshake`](../abs_kb_core_handshake/README.md)：
   两个层面握手各自解决什么、为什么分开；
 - [`kb_core_rproxy`](../../../kb_plugins/crates/kb_core_rproxy/README.md)：
   本 crate 的第一个调用方（网关）；

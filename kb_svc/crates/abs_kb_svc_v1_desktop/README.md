@@ -1,0 +1,338 @@
+# abs_kb_svc_v1_desktop
+
+知识库**协议 v1 的桌面端**：`kb_admin_desktop` 与 `kb_core` 之间交换的数据，
+以及一个**与异步运行时无关的异步 RPC 业务接口**。
+
+本 crate 原来是 `abs_kb_svc` 里的 `v1::desktop` 模块，2026-09-18 拆成独立 crate。
+`abs_kb_svc` 现在只做**聚合层**，仍然把这些类型挂在
+`abs_kb_svc::v1::desktop::<类型名>` 下，因此既有调用方的路径不变。
+两个层面握手里**系统层**的消息（`IpcReadyNotice` / `HandshakeNoticeKind`）在
+[`abs_kb_core_handshake`](../abs_kb_core_handshake/) 里，本 crate 把它转出来，
+让桌面协议的公开面同时包含两个层次。
+
+> **当前状态：首批数据定义与首批异步 RPC trait 已落地。**
+> [`src/lib.rs`](src/lib.rs) 已经给出桌面客户端与 `kb_core` 之间的
+> 通信数据（15 个请求 / 11 个应答 / 9 个事件），并有单元测试与文档测试覆盖。
+> [`src/rpc_.rs`](src/rpc_.rs) 已给出**按业务域拆分的异步
+> RPC trait** 的第一批：`TrKbEndpoint`、`RpcError`、`TrHandshake`、
+> `TrWorkspaceService`、`TrSessionService`（工作区与会话的七条增删查改），并由
+> [`tests/rpc_contract.rs`](tests/rpc_contract.rs) 用一份 `gen_mcf2` 展开的 mock
+> 实现守住契约。
+> 其余域（设置 / 目录 / 生成 / 事件订阅）与插件侧数据（将来的 `v1::plugin`）
+> **尚未落地**，其公开 API 属于**对外约定**，按 `AGENTS.md` 第 1 条须经团队确认后
+> 才能落到代码。
+>
+> 背景、证据与待决策项见：
+> - [`dev-notes/abs_kb_svc-20260917-1254.md`](../../../dev-notes/abs_kb_svc-20260917-1254.md)（定位与选型决策）
+> - [`dev-notes/kb_admin_desktop-20260917-1341.md`](../../../dev-notes/kb_admin_desktop-20260917-1341.md)（客户端通信需求调查）
+> - [`dev-notes/kb_svc_servo_ipc-20260917-1548.md`](../../../dev-notes/kb_svc_servo_ipc-20260917-1548.md)（IPC 落地方案与 trait 形状验证）
+> - [`dev-notes/kb_admin_desktop-20260918-1034.md`](../../../dev-notes/kb_admin_desktop-20260918-1034.md) §9（本次拆分的来龙去脉）
+
+---
+
+## 1. 它是什么 / 不是什么
+
+| | 内容 |
+| :--- | :--- |
+| **是** | ① **通信内容**——跨进程通信的业务数据语义（谁说、说什么、字段含义）；<br>② **信道底层抽象**（收发端点、连接、事件）；<br>③ **异步 RPC 业务接口**——把 `kb_core` 的能力抽象成若干带异步关联函数的 trait。 |
+| **不是** | 不是任何具体传输的实现。它不依赖 ipc-channel、不依赖 socket、不依赖 tokio，也不定义"消息在线上长什么样"。 |
+
+**一句话**：本 crate 规定"通信双方在**语义**上如何对话"，
+把"这些对话在**物理上**如何搬运"留给实现 crate。
+
+## 2. 为什么需要它
+
+三条已确认的技术决策直接决定了本 crate 的存在理由
+（详见 dev-notes 的 §2）：
+
+1. **`kb_core` 是独立 server，暂不考虑迁移到移动端。**
+   于是跨平台不再是选型的一级约束。
+2. **将来若需要别的部署形态，通过替换 IPC 实现来适配，而不是死磕某一种传输。**
+   要实现这一点，业务代码就不能直接依赖任何一种传输——这正是本 crate 的职责。
+3. **尽可能简化技术链条。**
+   业务层与传输层之间不再插入需要单独维护的镜像类型或编解码约定。
+
+## 3. 分层与依赖方向
+
+```text
+   kb_core                       kb_admin_desktop
+  （服务进程）                     （客户端进程）
+       │                                │
+       └────────────┬───────────────────┘
+                    │   只依赖「业务语义 + 异步 RPC 接口」
+        ┌───────────▼────────────────┐
+        │ abs_kb_svc_v1_desktop      │                ← 必选
+        └───────────┬────────────────┘
+                    │   由实现 crate 落地
+     ┌──────────────┼───────────────┬─────────────────┐
+     │              │               │                 │
+┌────▼─────┐  ┌─────▼──────┐  ┌─────▼──────┐  ┌───────▼───────┐
+│ kb_svc_  │  │ kb_svc_    │  │ kb_svc_    │  │ （将来其它）   │  ← 可选，择一
+│ servo_ipc│  │ socket     │  │ thread     │  │               │
+│(ipc-chan)│  │            │  │(同进程线程)│  │               │
+└──────────┘  └────────────┘  └────────────┘  └───────────────┘
+```
+
+要点：
+
+- **箭头单向**：本 crate 不认识任何实现 crate，实现 crate 认识本 crate；
+- 服务进程与客户端**只必选**本 crate（或经聚合层 `abs_kb_svc`），
+  实现 crate 按需要的传输形态**可选**引入；
+- 换传输 = 换一个实现 crate，业务代码不动。
+
+## 4. 三块内容
+
+### 4.1 通信内容（业务数据语义）
+
+跨进程通信用到的数据类型的**语义定义**：一轮生成、一条增量、用量、能力集、
+服务配置、工作区与会话……它们描述"业务上这是什么"。
+
+**表示形式由实现需要决定**：本 crate 的数据类型带 `#[derive(Serialize, Deserialize)]`，
+因为实现候选 `kb_svc_servo_ipc`（ipc-channel）的 typed 通道需要它。
+这不改变类型的形状——没有定长限制、没有容量上限，`String` / `Vec` / `Option` 都能用。
+
+已落地的部分：
+
+| 文件 | 内容 |
+| :--- | :--- |
+| [`src/lib.rs`](src/lib.rs) | 桌面客户端 `kb_admin_desktop` × `kb_core` 的全部数据（`lib.rs` + 12 个子模块） |
+| （未定义） | 插件 × `kb_core` 的消息（`v1::plugin`），将来另起一个 crate，与这里**不共用**类型 |
+
+### 4.2 信道底层抽象
+
+对"通信端点"的最小抽象，供实现 crate 落地：
+
+- 连接的建立与关闭；
+- 单向/双向消息的收发；
+- 对端消失、连接被关闭等事件的表达。
+
+这层刻意做薄：**能表达语义即可**，不追求覆盖所有传输的能力（例如不在此处抽象"零拷贝"，
+因为并非所有实现都提供它）。
+
+### 4.3 异步 RPC 业务接口
+
+把 `kb_core` 的能力抽象成**一个个带异步关联函数的 trait**，
+按业务域拆分（例如会话、设置、工作区、插件管理、知识库检索）。
+
+调用者（`kb_core` 自身、插件、桌面客户端）只面向这些 trait 编程；
+不同模块提供不同实现（ipc-channel / socket / 同进程线程 / mock）。
+
+**已落地的第一批**（[`src/rpc_.rs`](src/rpc_.rs)）：
+
+| 名字 | 内容 |
+| :--- | :--- |
+| `TrKbEndpoint` | 所有按域 trait 的公共基底，只定义实现方的错误类型 |
+| `RpcError<E>` | 一次调用的失败：`Business(ErrorReply)` / `Transport(E)` 两个变体 |
+| `TrHandshake` | **应用层握手**：`hello(ClientInfo) -> ServerInfo`（协议要求的第一条请求） |
+| `TrWorkspaceService` | 工作区的增删查（3 个方法） |
+| `TrSessionService` | 会话的增删查改（4 个方法） |
+| `TrKbService` | 上面几个的组合 trait（服务端实现与客户端代理都实现它） |
+
+**两个层面的握手**（系统层消息在 [`abs_kb_core_handshake`](../abs_kb_core_handshake/)，应用层在 [`src/handshake_.rs`](src/handshake_.rs)）：
+
+| 层面 | 解决什么 | 消息 | 机制（谁定） |
+| :--- | :--- | :--- | :--- |
+| **系统层** | 找得到、连得上 | `IpcReadyNotice`：`kb_core` 用 `--handshake-prompt=stdio` 往 stdout 打的一行 JSON，公布 IPC 端点名字文件 | 传输实现：挑哪种内核端点、端点放哪、失败怎么重试 |
+| **应用层** | 谈得成 | `Request::Hello(ClientInfo)` → `Reply::Hello(ServerInfo)` → `Event::Ready(ServerState)` | 协议 v1，传输无关 |
+
+把系统层的**消息**也收进来，是因为它是两个进程之间的约定：`kb_core` 与它的启动方
+（`kb_core_starter`）必须共用同一份字段定义，否则改个字段名只能靠跑起来才发现。
+但**机制**仍留在实现 crate 里——换一种传输可以完全不经过这条 stdio 通知。
+两者各自解决什么、为什么分开，写在 `handshake_` 的模块文档里。
+
+**形状上的要点**（细节见该模块的模块文档）：
+
+- 每个方法声明一个**手写 GAT**并约束到 `abs_cancel::TrMayCancel`，方法本身同步；
+  实现方用 `gen_mcf2::gen_may_cancel_future` 在**模块级**展开出具体 future 类型
+  来填那个 GAT（该宏不能写进 trait / impl）；
+- 本 crate **只依赖 `abs_cancel`，不依赖 `gen_mcf2`**，因此 `kb_core` 的依赖链上
+  没有 `gen_mcf2`（`AGENTS.md` 第 4 条对它的例外依然成立）；
+- 请求载荷进、应答载荷出，纯客户端的簿记字段（`LocalId`）不往返。
+
+**流式内容**（LLM 的增量输出）用 `abs_async_iter::{TrAsyncIterator, TrFlux}` 表达，
+而不是把增量塞进一次请求/应答里——本 crate 的 `Event` 就是这条流的元素类型。
+承载它的 `TrGeneration` / `TrEventSource` 尚未落地。
+
+## 5. 实现方必须遵守的契约（硬性）
+
+这一节是本 crate 最重要的部分：**它把"阻塞 IO 不得进入异步执行线程"从经验之谈变成接口契约。**
+
+1. **future 里禁止阻塞。**
+   任何由本 crate 的 trait 返回的 future，其 `poll` **不得**执行会阻塞 OS 线程的操作
+   （`recv`、`select`、同步文件 IO、不可控的锁等待……）。
+   阻塞只能发生在实现方自有的 **IO 线程**上。
+
+   > 依据：本机实测显示，在异步任务里内联调用阻塞 `recv()`，会在 300 ms 等待期间
+   > 让 `current_thread` 运行时的定时任务执行 **0 次**；改用"专用线程 + 完成量"后，
+   > 同一场景执行 **26 次**。
+
+2. **IO 线程模型由实现方决定，但端点不得交给调用者的执行器线程。**
+   一个端点一条线程、还是一个线程用多路复用（如 `IpcReceiverSet`）服务多个端点，
+   属于实现细节；但把阻塞端点直接暴露给调用方是禁止的。
+
+3. **完成量必须运行时可无关。**
+   把结果从 IO 线程交回异步侧所用的原语只能建立在 `core::task::Waker` /
+   `futures_core` 层面，**不得**出现 tokio / async-std / compio 的私有类型。
+   本 crate 的公开 API 里也不得出现任何具体运行时的类型。
+
+4. **唤醒不得丢失。**
+   "IO 线程先完成、异步侧后注册 `Waker`"这一时序必须被正确处理；
+   这是该模式最常见的缺陷，表现为偶发卡死而非稳定报错。
+
+5. **取消必须可达。**
+   调用者丢弃 future 后，实现方要么向对端发出显式取消信号，要么依赖连接断开被对端感知；
+   **不得**让对端永久阻塞在等待上。
+
+6. **背压必须在语义层表达。**
+   不要依赖传输层提供背压（例如 ipc-channel 的通道是无界的、`send` 永不阻塞）。
+   "同一会话同时只允许一轮进行中"这类约束由本 crate 的语义定义，实现方只需忠实执行。
+
+7. **错误要分层。**
+   "传输层错误"（对端断开、编码失败）与"业务错误"（服务不存在、缺少 API Key）
+   不得混在同一个类型里：前者走 impl 的错误类型，后者是正常应答的一个分支。
+8. **协议类型的 serde 写法受传输约束。**
+   实现候选用的 ipc-channel 内部是 **postcard**（不自描述），因此协议类型：
+   枚举**一律用 serde 默认的外部标签**，**不得使用 `skip_serializing_if`**，
+   也不要使用 `#[serde(flatten)]`。
+
+   > 依据：实测这两个写法都只在**解码**时失败——内部标签报
+   > "This is a feature that PostCard will never implement"，
+   > `skip_serializing_if` 报 `DeserializeUnexpectedEnd`；而编码看起来是成功的。
+   > 本 crate 的 `envelope_.rs` 用 postcard **真解码**的往返测试守住这两条。
+
+## 6. 接口形状（对齐仓库当前的异步约定）
+
+本仓库的异步抽象已经在 2026-09-17 迁移到 **`abs_cancel` v0.2 + `gen_mcf2` + `abs_async_iter`**，
+`abs_kb_svc_v1_desktop` 沿用这套约定，以保证整个仓库的一致性：
+
+| 约定 | 说明 |
+| :--- | :--- |
+| trait 名前缀 `Tr` | 例如 `TrMessage`、`TrLlmService` |
+| **不用裸 `async fn`** | 用 GAT 关联类型 + `abs_cancel::TrMayCancel`（v0.2），避免 `dyn` 兼容性与 box 开销 |
+| 具体 future 由 `gen_mcf2::gen_may_cancel_future` 生成 | 满足 `AGENTS.md` 第 4 条；同时得到 `Future` 与 `TrMayCancel` 两套实现 |
+| 流式内容用 `abs_async_iter` | `TrFlux` 订阅、`TrAsyncIterator` 逐项拉取，每项都可取消 |
+| 成功/失败用 `anylr::TrEitherOf` 或裸 `Result` | 与该模块既有写法保持一致 |
+| 错误类型实现 `core::error::Error` | 便于在 `no_std` 语境下复用 |
+| 字符串泛化用 `abs_str::TrStringView` | 仅在确实需要泛化时引入 |
+
+**`gen_mcf2` 的用法**（摘自其宏文档，序号即约定）：
+
+1. 只能作用于 `async fn`；
+2. 显式声明所需生命周期，不要用 `__` 结尾的标识符（宏保留该后缀）；
+3. 最后一个泛型**类型**参数是取消令牌类型，且 where 子句里约束 `TrCancellationToken`；
+4. 全部约束写在 where 子句里，不要内联在泛型参数上；
+5. 最后一个函数参数必须是该取消令牌类型，且**按值**传入。
+
+**形状已落地**：可编译、可运行的样板见
+[`src/rpc_.rs`](src/rpc_.rs) 与
+[`tests/rpc_contract.rs`](tests/rpc_contract.rs)（后者用 `gen_mcf2` 展开了一个 mock
+实现，同时充当实现方要照抄的样板）：
+
+```rust
+/// trait 侧：手写 GAT、约束到 `TrMayCancel`，方法本身同步。
+pub trait TrWorkspaceService: TrKbEndpoint {
+    type ListWorkspaces<'f>: abs_cancel::TrMayCancel<
+            'f,
+            MayCancelOutput = Result<WorkspaceList, RpcError<Self::Error>>,
+        >
+    where
+        Self: 'f;
+
+    fn list_workspaces<'f>(&'f self) -> Self::ListWorkspaces<'f>;
+}
+```
+
+```rust
+/// 实现侧：模块级 async fn 交给宏展开，再把生成的类型填进关联类型。
+#[gen_mcf2::gen_may_cancel_future(ListWorkspaces)]
+async fn list_workspaces_async<'s, C>(
+    service: &'s MyService,
+    cancel: C,
+) -> Result<WorkspaceList, RpcError<MyTransportError>>
+where
+    C: abs_cancel::TrCancellationToken,
+{ /* 业务逻辑；必须真的检查 cancel */ }
+
+impl TrWorkspaceService for MyService {
+    type ListWorkspaces<'f> = ListWorkspacesAsync<'f, 'f>;
+
+    fn list_workspaces<'f>(&'f self) -> Self::ListWorkspaces<'f> {
+        ListWorkspacesAsync::new(self)
+    }
+}
+```
+
+> 该形状由 `external/ipc-channel-poc/src/trait_spike.rs` 先行验证；
+> 实现 crate 需要 nightly 的 `#![feature(impl_trait_in_assoc_type)]`。
+> 其余按域 trait 的粒度见
+> [`dev-notes/kb_svc_servo_ipc-20260917-1548.md`](../../../dev-notes/kb_svc_servo_ipc-20260917-1548.md) §3.4。
+
+## 7. 已知的实现候选
+
+| 实现 crate | 传输 | 状态 |
+| :--- | :--- | :--- |
+| `kb_svc_servo_ipc` | servo/ipc-channel 0.23（跨进程 channel；Unix 走 socketpair + fd 传递，macOS 走 Mach port，Windows 走命名管道） | **已实现**：引导（`Listener` / 客户端重试）、三通道连接、`Client` 代理、服务端派发；端到端用例见该 crate 的 `tests/round_trip.rs` 与 `kb_core::ipc_` |
+| `kb_svc_thread`（暂名） | 同进程线程 + 内存队列 | 备选；用于测试或"单进程内跑全部组件"的形态 |
+| `kb_svc_socket`（暂名） | 保留 socket 形态 | 备选；应对未来跨机/跨平台需求 |
+
+关于 ipc-channel 的实测结论、限制（一个 one-shot server 只接受一次连接、
+通道无界、`to_stream()` 只对 typed 通道提供等）以及它与 iceoryx2 的取舍对比，
+见 dev-notes §3。
+
+## 8. 命名与文档约定
+
+- 所有公开项必须有 `///` 文档注释，并按需包含 `# Examples` / `# Panics` / `# Errors`；
+  正文以中文为主（`AGENTS.md` 第 8 条）。
+- 测试函数（含 `tests/` 与文档测试）必须有中文文档注释，写明
+  **测试目标 / 测试手段 / 判定标准**（`AGENTS.md` 第 2 条）。
+- agent 编写的私有 struct 字段与私有函数名以 `_` 结尾（`AGENTS.md` 第 5 条）。
+- 对外公开的异步方法优先用 `gen_may_cancel_future` 封装，且实现不得假定调用者不会取消
+  （`AGENTS.md` 第 4 条）。
+
+## 9. 与其它 crate 的关系
+
+| crate | 关系 |
+| :--- | :--- |
+| `abs_kb_core_handshake` | 系统层握手的消息（`IpcReadyNotice`）；本 crate 依赖它并转出，让两个层次在同一个公开面上 |
+| `abs_kb_svc` | **聚合层**：把本 crate 挂到 `abs_kb_svc::v1::desktop`，本身不定义类型 |
+| `abs_llm` | 提供 LLM 语义类型与 trait；本 crate 的业务数据引用其中的类型，但不重复定义 |
+| `kb_svc_*`（实现 crate） | 依赖本 crate（或聚合层 `abs_kb_svc`）；反向依赖禁止 |
+| `kb_core` | 面向本 crate 的 trait 编程；不直接依赖任何实现 crate 的传输类型 |
+| `kb_plugins/*`、`kb_admin_desktop` | 同上 |
+| `kb_svc_salvo` | **已废弃**（HTTP 通道整体删除）；其中的会话/设置语义将迁入新结构 |
+
+### 依赖面上的说明
+
+本 crate 的 `[dependencies]` 只有 `abs_llm`、`abs_kb_core_handshake`、`serde`、
+`uuid` 四项：协议只依赖"语义词汇 + 序列化"，不依赖任何运行时、传输或存储。
+`abs_cancel` 经 `abs_llm::x_deps` 转出（见 `src/rpc_.rs`），因此不必单列。
+
+## 10. 尚未确定的事项
+
+以下问题在本 crate 落地前必须明确（完整清单见 dev-notes §5）：
+
+1. ~~**trait 划分粒度**：一个大 trait 还是按业务域拆成多个~~ → **已定**：
+   按**业务域**拆成多个小 trait（工作区 / 会话 / 设置 / 目录 / 生成 / 事件订阅），
+   再加一个 `TrKbEndpoint` 公共基底与一个 `TrKbService` 组合 trait。
+   第一批已落地，见 §4.3 与 [`src/rpc_.rs`](src/rpc_.rs)。
+2. **`no_std` 与否**：抽象层本身可以用 `core` 表达，但业务数据大概率需要 `alloc`
+   （事实上已经需要：协议类型里全是 `String` / `Vec<T>`，`serde` 因此必须开 `alloc`）；
+3. ~~**引导/会合机制**：客户端如何找到 `kb_core` 的服务端点~~ →
+   **系统层那半已定**：`abs_kb_core_handshake` 的 `IpcReadyNotice`（`kb_core`
+   用 `--handshake-prompt=stdio` 公布端点名字文件）。**应用层那半**是本 crate 的
+   `TrHandshake`；剩下未定的是"挑哪种内核端点、失败怎么重试"，那属于传输实现；
+4. **跨机需求**：是否在近期范围内显式排除；
+5. ~~**`buffex` / `mm_ptr` 的定位**~~ → 本 crate 现在**不依赖**它们（协议只依赖
+   语义与序列化），这条遗留问题随之消失；`abs_kb_svc` 那边历史性的依赖也已一并去掉；
+6. **本地创建对象的回收与幂等**：客户端建了 `LocalId` 却始终没同步（或同步失败）
+   时如何清理；同一次同步重发时如何避免重复创建（应由 `kb_core` 侧按 `LocalId` 幂等）。
+
+**已经关闭的问题**：
+
+- ~~载荷表示（是否用 serde）~~ → 已定：使用 typed 通道 + `#[derive(Serialize, Deserialize)]`。
+  "零 serde" 只是"以内存共享的 IPC 为前提"时的目标，该前提已放弃，因此它不再是约束。
+  详见 dev-notes `abs_kb_svc-20260917-1254.md` §0.1 澄清二。
+- ~~会话历史的归属~~ → 已定：工作区与会话**由 `kb_core` 管理并多端同步**，
+  历史留在服务端，`GetSession` / `SessionDetail` / `SessionChanged` 保留。
+  客户端的"当前选中"仍然留在本地。
+  详见 dev-notes `kb_admin_desktop-20260917-1341.md` §5.1。
