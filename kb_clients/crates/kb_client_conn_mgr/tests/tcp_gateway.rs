@@ -145,20 +145,47 @@ fn reply_for_(envelope: &RequestEnvelope) -> ReplyEnvelope {
             },
         },
         Request::RemoveWorkspace { .. } => Reply::Ack,
+        Request::RenameWorkspace { workspace_id, name } => {
+            Reply::WorkspaceRenamed(Workspace {
+                workspace_id: workspace_id.clone(),
+                name: name.clone(),
+                path: "/tmp/fake".to_string(),
+            })
+        }
         Request::CreateSession(request) => Reply::SessionCreated {
             local_id: request.local_id.clone(),
             session: SessionSummary {
                 session_id: SessionId::new("s-new"),
                 workspace_id: request.workspace_id.clone(),
+                // 没有显式标题时，假网关也照 `kb_core` 的口径从首条用户消息推导。
                 title: request
                     .title
                     .clone()
+                    .filter(|title| !title.trim().is_empty())
+                    .or_else(|| {
+                        request
+                            .turns
+                            .iter()
+                            .find(|turn| turn.role == Role::User)
+                            .map(|turn| turn.text.clone())
+                    })
                     .unwrap_or_else(|| "新会话".to_string()),
                 updated_at_millis: 1_760_000_000_000,
                 turn_count: request.turns.len() as u32,
             },
         },
         Request::RemoveSession { .. } => Reply::Ack,
+        Request::RenameSession {
+            workspace_id,
+            session_id,
+            title,
+        } => Reply::SessionRenamed(SessionSummary {
+            session_id: session_id.clone(),
+            workspace_id: workspace_id.clone(),
+            title: title.clone(),
+            updated_at_millis: 1_760_000_000_000,
+            turn_count: 2,
+        }),
         // 正文与生成：假网关也照 `kb_core` 的口径把问题逆序当回答，好让客户端
         // 侧的映射与断言有真实形状可言。
         Request::GetSession {
@@ -445,4 +472,41 @@ fn tcp_profile_reads_session_and_asks_() {
     assert_eq!(asked.turns[0].text, "你好");
     assert_eq!(asked.turns[1].text, "好你");
     assert_eq!(asked.summary.turn_count, 2);
+}
+
+/// 测试远程路径上的重命名：工作区与会话各来一次。
+///
+/// - 手段：正常假网关，`rename_workspace` 与 `rename_session` 各调一次。
+/// - 判断：两个调用都拿到改名之后的载荷（新名字 / 新标题），标识保持不变——
+///   说明 `RenameWorkspace` / `RenameSession` 被正确编码、按新应答变体解回。
+#[test]
+fn tcp_profile_renames_workspace_and_session_() {
+    let address = start_gateway_(Behaviour::Normal);
+    let profile = Connection::tcp("假网关", address);
+    let client = block_on(async { connect(&profile).await }).expect("应当能连上");
+    let timeout = || TimeoutToken::after(Duration::from_secs(5));
+
+    let workspace = block_on(async {
+        client
+            .rename_workspace(WorkspaceId::new("w-fake"), "新名字".to_string())
+            .may_cancel_with(timeout())
+            .await
+    })
+    .expect("工作区改名应当成功");
+    assert_eq!(workspace.workspace_id, WorkspaceId::new("w-fake"));
+    assert_eq!(workspace.name, "新名字");
+
+    let session = block_on(async {
+        client
+            .rename_session(
+                WorkspaceId::new("w-fake"),
+                SessionId::new("s-fake"),
+                "新标题".to_string(),
+            )
+            .may_cancel_with(timeout())
+            .await
+    })
+    .expect("会话改名应当成功");
+    assert_eq!(session.session_id, SessionId::new("s-fake"));
+    assert_eq!(session.title, "新标题");
 }

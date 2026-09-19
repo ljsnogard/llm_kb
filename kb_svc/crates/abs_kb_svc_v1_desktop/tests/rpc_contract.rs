@@ -323,6 +323,61 @@ where
     Ok(())
 }
 
+/// mock：工作区改名。
+#[gen_may_cancel_future(RenameWorkspace)]
+async fn rename_workspace_async<'s, C>(
+    service: &'s MockService,
+    workspace_id: WorkspaceId,
+    name: String,
+    cancel: C,
+) -> Result<Workspace, RpcError<MockTransportError>>
+where
+    C: TrCancellationToken,
+{
+    if cancel.is_cancelled() {
+        return Err(RpcError::Transport(MockTransportError::cancelled_()));
+    }
+
+    let mut workspaces = service.workspaces_.borrow_mut();
+    if let Some(workspace) = workspaces.get_mut(workspace_id.as_str()) {
+        workspace.name = name.trim().to_string();
+        return Ok(workspace.clone());
+    }
+    drop(workspaces);
+    Err(business_(
+        ErrorCode::NotFound,
+        format!("工作区不存在: {workspace_id}"),
+    ))
+}
+
+/// mock：会话改名。
+#[gen_may_cancel_future(RenameSession)]
+async fn rename_session_async<'s, C>(
+    service: &'s MockService,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    title: String,
+    cancel: C,
+) -> Result<SessionSummary, RpcError<MockTransportError>>
+where
+    C: TrCancellationToken,
+{
+    if cancel.is_cancelled() {
+        return Err(RpcError::Transport(MockTransportError::cancelled_()));
+    }
+
+    let mut sessions = service.sessions_.borrow_mut();
+    if let Some(detail) = sessions.get_mut(&(workspace_id.to_string(), session_id.to_string())) {
+        detail.summary.title = title.trim().to_string();
+        return Ok(detail.summary.clone());
+    }
+    drop(sessions);
+    Err(business_(
+        ErrorCode::NotFound,
+        format!("会话不存在: {session_id}"),
+    ))
+}
+
 // ── 把生成的 future 填进 trait 的关联类型 ─────────────────────────────
 
 impl TrKbEndpoint for MockService {
@@ -342,6 +397,10 @@ impl TrWorkspaceService for MockService {
         = RemoveWorkspaceAsync<'f, 'f>
     where
         Self: 'f;
+    type RenameWorkspace<'f>
+        = RenameWorkspaceAsync<'f, 'f>
+    where
+        Self: 'f;
 
     fn list_workspaces<'f>(&'f self) -> Self::ListWorkspaces<'f> {
         ListWorkspacesAsync::new(self)
@@ -353,6 +412,14 @@ impl TrWorkspaceService for MockService {
 
     fn remove_workspace<'f>(&'f self, workspace_id: WorkspaceId) -> Self::RemoveWorkspace<'f> {
         RemoveWorkspaceAsync::new(self, workspace_id)
+    }
+
+    fn rename_workspace<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        name: String,
+    ) -> Self::RenameWorkspace<'f> {
+        RenameWorkspaceAsync::new(self, workspace_id, name)
     }
 }
 
@@ -371,6 +438,10 @@ impl TrSessionService for MockService {
         Self: 'f;
     type RemoveSession<'f>
         = RemoveSessionAsync<'f, 'f>
+    where
+        Self: 'f;
+    type RenameSession<'f>
+        = RenameSessionAsync<'f, 'f>
     where
         Self: 'f;
 
@@ -396,6 +467,15 @@ impl TrSessionService for MockService {
         session_id: SessionId,
     ) -> Self::RemoveSession<'f> {
         RemoveSessionAsync::new(self, workspace_id, session_id)
+    }
+
+    fn rename_session<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        title: String,
+    ) -> Self::RenameSession<'f> {
+        RenameSessionAsync::new(self, workspace_id, session_id, title)
     }
 }
 

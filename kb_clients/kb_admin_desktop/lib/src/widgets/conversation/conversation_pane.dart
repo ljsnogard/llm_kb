@@ -99,17 +99,26 @@ class _ConversationPaneState extends State<ConversationPane> {
     final String emptyHint;
 
     if (serverMode) {
+      final bool drafting = connection.draftingSession;
       workspaceName = connection.selectedServerWorkspace?.name;
-      sessionTitle = connection.selectedServerSession?.title;
+      sessionTitle = drafting
+          ? '新会话'
+          : connection.selectedServerSession?.title;
       final SessionDetailReport? detail = connection.selectedSessionDetail;
       turns = detail == null
           ? const <ChatTurn>[]
           : detail.turns.map(chatTurnOf_).toList(growable: false);
-      emptyHint = connection.selectedSessionId == null
-          ? '在左侧选一个会话，或者在工作区那一行点 + 新建一个。'
-          : (connection.isLoadingDetail(connection.selectedSessionId!)
-                ? '正在读取会话…'
-                : '这个会话还没有消息。在下面输入问题，kb_core 会把它记下来。');
+      if (drafting) {
+        emptyHint =
+            '这是还没落盘的新会话：在下面输入第一个问题，'
+            'kb_core 会用这个问题给它起名。';
+      } else if (connection.selectedSessionId == null) {
+        emptyHint = '在左侧选一个会话，或者在工作区那一行点 + 新建一个。';
+      } else if (connection.isLoadingDetail(connection.selectedSessionId!)) {
+        emptyHint = '正在读取会话…';
+      } else {
+        emptyHint = '这个会话还没有消息。在下面输入问题，kb_core 会把它记下来。';
+      }
     } else {
       final Workspace? workspace = controller.activeWorkspace;
       final ChatSession? session = controller.activeSession;
@@ -351,9 +360,12 @@ class _ComposerSeat extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (serverMode) {
-      final bool hasSession = connection!.selectedSessionId != null;
+      final bool ready =
+          connection!.selectedSessionId != null || connection!.draftingSession;
       return Composer(
-        hint: hasSession ? '输入问题，Enter 发送，Shift+Enter 换行' : '先在左侧选一个会话',
+        hint: ready
+            ? '输入问题，Enter 发送，Shift+Enter 换行'
+            : '先在左侧选一个会话，或者点「新会话」',
         onSend: (String text) => _sendServer(context, text),
       );
     }

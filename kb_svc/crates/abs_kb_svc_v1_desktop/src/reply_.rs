@@ -43,6 +43,9 @@ pub enum Reply {
         workspace: Workspace,
     },
 
+    /// 工作区已改名（载荷是改名之后的工作区）。
+    WorkspaceRenamed(Workspace),
+
     /// 会话列表。
     SessionList(SessionList),
 
@@ -56,6 +59,9 @@ pub enum Reply {
         /// 服务端建立的会话摘要（含 `kb_core` 分配的标识）。
         session: SessionSummary,
     },
+
+    /// 会话已改名（载荷是改名之后的会话摘要）。
+    SessionRenamed(SessionSummary),
 
     /// 会话的完整内容。
     SessionDetail(SessionDetail),

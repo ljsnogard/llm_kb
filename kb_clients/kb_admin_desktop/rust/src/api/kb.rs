@@ -549,10 +549,21 @@ pub fn remove_workspace(workspace_id: String) -> OpReport {
     }
 }
 
-/// 在某个工作区下新建一个会话。
+/// 在某个工作区下新建一个会话（可选地带上**第一个问题**）。
 ///
-/// `title` 为空串时由服务端推导：新会话还没有消息，因此会落到缺省标题。
-pub fn create_session(workspace_id: String, title: String) -> SessionReport {
+/// 两种典型用法：
+///
+/// - `turn_id` 为空串：建一个空会话。此时 `title` **必须**非空——`kb_core` 不
+///   允许"没有消息、又只有默认名字"的会话落盘；
+/// - `turn_id` 非空：把 `question` 作为会话的第一条用户消息一起提交。`kb_core`
+///   会据此给会话起名（问题开头若干字），这正是客户端"草稿会话首次提问"的用法：
+///   紧接着再调 [`ask`]，服务端会按 `turn_id` 去重，不会重复添加这条消息。
+pub fn create_session(
+    workspace_id: String,
+    title: String,
+    turn_id: String,
+    question: String,
+) -> SessionReport {
     let Some((_, client)) = current_() else {
         return SessionReport {
             error: NOT_CONNECTED_.to_string(),
@@ -561,16 +572,92 @@ pub fn create_session(workspace_id: String, title: String) -> SessionReport {
     };
 
     let trimmed = title.trim();
+    let turns = if turn_id.trim().is_empty() {
+        Vec::new()
+    } else {
+        vec![Turn {
+            turn_id: TurnId::new(turn_id),
+            role: Role::User,
+            text: question,
+            reasoning: String::new(),
+            state: TurnState::Done,
+            tool_calls: Vec::new(),
+            usage: None,
+            notice: None,
+        }]
+    };
+
     let request = CreateSessionRequest {
         workspace_id: WorkspaceId::new(workspace_id),
         local_id: LocalId::generate(),
         title: (!trimmed.is_empty()).then(|| trimmed.to_string()),
-        // 连上之后新建的会话没有离线攒下的历史。
-        turns: Vec::new(),
+        turns,
     };
 
     let token = TimeoutToken::after(client.request_timeout());
     match block_on(client.create_session(request).may_cancel_with(token)) {
+        Ok(session) => SessionReport {
+            ok: true,
+            session: session_view_(&session),
+            error: String::new(),
+        },
+        Err(error) => SessionReport {
+            error: describe_client_error_(&error),
+            ..SessionReport::default()
+        },
+    }
+}
+
+/// 重命名一个工作区（只改展示名，磁盘目录不动）。
+pub fn rename_workspace(workspace_id: String, name: String) -> WorkspaceReport {
+    let Some((_, client)) = current_() else {
+        return WorkspaceReport {
+            error: NOT_CONNECTED_.to_string(),
+            ..WorkspaceReport::default()
+        };
+    };
+
+    let token = TimeoutToken::after(client.request_timeout());
+    match block_on(
+        client
+            .rename_workspace(WorkspaceId::new(workspace_id), name)
+            .may_cancel_with(token),
+    ) {
+        Ok(workspace) => WorkspaceReport {
+            ok: true,
+            workspace: workspace_view_(&workspace),
+            error: String::new(),
+        },
+        Err(error) => WorkspaceReport {
+            error: describe_client_error_(&error),
+            ..WorkspaceReport::default()
+        },
+    }
+}
+
+/// 重命名一个会话（改标题）；`title` 只有空白时由服务端重新推导。
+pub fn rename_session(
+    workspace_id: String,
+    session_id: String,
+    title: String,
+) -> SessionReport {
+    let Some((_, client)) = current_() else {
+        return SessionReport {
+            error: NOT_CONNECTED_.to_string(),
+            ..SessionReport::default()
+        };
+    };
+
+    let token = TimeoutToken::after(client.request_timeout());
+    match block_on(
+        client
+            .rename_session(
+                WorkspaceId::new(workspace_id),
+                SessionId::new(session_id),
+                title,
+            )
+            .may_cancel_with(token),
+    ) {
         Ok(session) => SessionReport {
             ok: true,
             session: session_view_(&session),

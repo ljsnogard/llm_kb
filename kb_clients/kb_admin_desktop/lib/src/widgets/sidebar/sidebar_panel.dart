@@ -632,8 +632,9 @@ Future<void> _onHostSelected_(
 
 /// 「新会话」按钮该做什么。
 ///
-/// - **已连接 `kb_core`**：在服务端当前选中的工作区里建一个会话（发
-///   `CreateSession`），列表会随之刷新；失败时弹一句说明。
+/// - **已连接 `kb_core`**：开一个**草稿会话**（只改客户端状态，不发请求）。
+///   用户发出第一条消息时才会 `CreateSession`，名字由 `kb_core` 从那个问题推导——
+///   于是"空的「新会话」"永远不会落盘。失败时弹一句说明。
 /// - **未连接**：退回本地那一套（`AppController`），这样没有服务端也能起界面。
 VoidCallback _newSessionAction_(
   BuildContext context,

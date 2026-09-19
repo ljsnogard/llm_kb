@@ -66,6 +66,13 @@ class ConnectionController extends ChangeNotifier {
   String? _selectedSessionId;
   String? _selectedSessionWorkspaceId;
 
+  /// 是否正处在一个**草稿会话**里。
+  ///
+  /// 草稿只活在客户端：点「新会话」不会马上在 `kb_core` 上建会话（"没有消息、
+  /// 又只有默认名字"的会话不允许落盘），而是等用户发出第一条消息时，
+  /// 用这条消息作为首条 `Turn` 去 `CreateSession`——名字由 `kb_core` 从问题推导。
+  bool _draftSession = false;
+
   /// 已经拉到的会话正文，按会话标识缓存。
   final Map<String, SessionDetailReport> _details = <String, SessionDetailReport>{};
   final Set<String> _loadingDetails = <String>{};
@@ -145,6 +152,9 @@ class ConnectionController extends ChangeNotifier {
 
   /// 当前选中的会话标识。
   String? get selectedSessionId => _selectedSessionId;
+
+  /// 是不是正处在一个还没落盘的**草稿会话**里（界面上显示为「新会话」）。
+  bool get draftingSession => _draftSession;
 
   /// 当前选中的会话摘要（来自列表缓存）。
   SessionView? get selectedServerSession {
@@ -343,7 +353,8 @@ class ConnectionController extends ChangeNotifier {
   Future<void> selectWorkspace(String workspaceId) async {
     final bool changed = _selectedWorkspaceId != workspaceId;
     _selectedWorkspaceId = workspaceId;
-    // 切到别的工作区时，原来选中的会话不再属于当前上下文。
+    // 切到别的工作区时，原来选中的会话（以及草稿）不再属于当前上下文。
+    _draftSession = false;
     if (_selectedSessionWorkspaceId != workspaceId) {
       _selectedSessionId = null;
       _selectedSessionWorkspaceId = null;
@@ -360,6 +371,7 @@ class ConnectionController extends ChangeNotifier {
     final bool changed = _selectedSessionId != sessionId;
     _selectedSessionId = sessionId;
     _selectedSessionWorkspaceId = workspaceId;
+    _draftSession = false;
     if (changed) {
       notifyListeners();
     }
@@ -476,23 +488,45 @@ class ConnectionController extends ChangeNotifier {
     });
   }
 
-  /// 在某个工作区下新建一个会话。
+  /// 在某个工作区里开一个**草稿会话**（客户端本地状态，不落盘）。
   ///
-  /// `title` 为空串时由服务端推导标题（新会话还没有消息，会落到缺省标题）。
-  Future<String> addSession(String workspaceId, {String title = ''}) async {
+  /// 界面上显示为「新会话」；用户发出第一条消息时才会 `CreateSession`（带着那条
+  /// 消息，好让 `kb_core` 据此起名），所以"空的「新会话」"永远不会出现在磁盘上。
+  /// 返回空串表示成功。
+  Future<String> startDraftSession(String workspaceId) async {
     if (!connected) {
       return _notConnected_;
     }
+    if (!_workspaces.any((WorkspaceView item) => item.id == workspaceId)) {
+      return '工作区不存在，先刷新一下';
+    }
+    _selectedWorkspaceId = workspaceId;
+    _selectedSessionId = null;
+    _selectedSessionWorkspaceId = null;
+    _draftSession = true;
+    notifyListeners();
+    return '';
+  }
+
+  /// 重命名一个工作区；返回空串表示成功。
+  Future<String> renameWorkspace(String workspaceId, String name) async {
+    if (!connected) {
+      return _notConnected_;
+    }
+    final String trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      return '名字不能为空';
+    }
     return _mutate_(() async {
-      final SessionReport report = await _api.createSession(
+      final WorkspaceReport report = await _api.renameWorkspace(
         workspaceId: workspaceId,
-        title: title,
+        name: trimmed,
       );
       if (!report.ok) {
         return report.error;
       }
-      _selectedWorkspaceId = workspaceId;
-      await _reloadSessions_(workspaceId);
+      await _refreshLocked();
+      _selectedWorkspaceId = report.workspace.id;
       return '';
     });
   }
@@ -520,7 +554,7 @@ class ConnectionController extends ChangeNotifier {
     });
   }
 
-  /// 在当前选中的工作区里新建一个会话。
+  /// 在当前选中的工作区里开一个草稿会话。
   ///
   /// 侧边栏顶部的「新会话」按钮在已连接时走这里；返回空串表示成功。
   Future<String> newSessionInSelectedWorkspace() async {
@@ -531,12 +565,38 @@ class ConnectionController extends ChangeNotifier {
     if (workspaceId == null) {
       return '还没有选中工作区';
     }
-    return addSession(workspaceId);
+    return startDraftSession(workspaceId);
+  }
+
+  /// 重命名一个会话（改标题）；返回空串表示成功。
+  ///
+  /// `title` 只有空白时由服务端重新推导（取首条用户消息），所以它也用来
+  /// "清掉手工起的名字"。
+  Future<String> renameSession(
+    String workspaceId,
+    String sessionId,
+    String title,
+  ) async {
+    if (!connected) {
+      return _notConnected_;
+    }
+    return _mutate_(() async {
+      final SessionReport report = await _api.renameSession(
+        workspaceId: workspaceId,
+        sessionId: sessionId,
+        title: title,
+      );
+      if (!report.ok) {
+        return report.error;
+      }
+      await _reloadSessions_(workspaceId);
+      return '';
+    });
   }
 
   // ── 提问（生成） ────────────────────────────────────────────────────
 
-  /// 向当前选中的会话提问；返回空串表示成功。
+  /// 向当前选中的会话提问（草稿会话则先建会话）；返回空串表示成功。
   ///
   /// `kb_core` 现在跑的是临时模拟的 LLM（把问题逆序输出），一回就带着两条新
   /// 消息回来，因此这里直接更新正文缓存，并顺手刷新会话列表（`turn_count` 变了）。
@@ -549,26 +609,57 @@ class ConnectionController extends ChangeNotifier {
       return '上一条提问还在处理中';
     }
     final WorkspaceView? workspace = selectedServerWorkspace;
-    final String? sessionId = _selectedSessionId;
-    if (workspace == null || sessionId == null) {
-      return '先在左侧选一个会话';
+    if (workspace == null) {
+      return '先在左侧选一个工作区';
     }
     final String text = question.trim();
     if (text.isEmpty) {
       return '';
     }
 
+    final bool drafting = _draftSession;
+    final String? sessionId = _selectedSessionId;
+    if (!drafting && sessionId == null) {
+      return '先在左侧选一个会话，或者点「新会话」';
+    }
+
     return _mutate_(() async {
+      final String turnId = _newTurnId_();
+      final String targetSessionId;
+
+      if (drafting) {
+        // 草稿首次提问：先把这条消息作为会话的第一条 `Turn` 建出去（名字由
+        // `kb_core` 从问题推导），再让 `Ask` 补上回答。两步用同一个 `turn_id`，
+        // 服务端会去重，所以问题不会被记两遍。
+        final SessionReport created = await _api.createSession(
+          workspaceId: workspace.id,
+          title: '',
+          turnId: turnId,
+          question: text,
+        );
+        if (!created.ok) {
+          return created.error;
+        }
+        targetSessionId = created.session.id;
+      } else {
+        targetSessionId = sessionId!;
+      }
+
       final SessionDetailReport report = await _api.ask(
         workspaceId: workspace.id,
-        sessionId: sessionId,
-        turnId: _newTurnId_(),
+        sessionId: targetSessionId,
+        turnId: turnId,
         question: text,
       );
       if (!report.ok) {
         return report.error;
       }
-      _details[sessionId] = report;
+
+      _draftSession = false;
+      _selectedWorkspaceId = workspace.id;
+      _selectedSessionId = targetSessionId;
+      _selectedSessionWorkspaceId = workspace.id;
+      _details[targetSessionId] = report;
       await _reloadSessions_(workspace.id);
       return '';
     });
@@ -579,10 +670,11 @@ class ConnectionController extends ChangeNotifier {
   /// 还没连上 `kb_core` 时统一的说明。
   static const String _notConnected_ = '还没有连接 kb_core';
 
-  /// 清掉"选中的会话"与正文缓存。
+  /// 清掉"选中的会话"、草稿状态与正文缓存。
   void _resetSessionSelection_() {
     _selectedSessionId = null;
     _selectedSessionWorkspaceId = null;
+    _draftSession = false;
     _details.clear();
     _loadingDetails.clear();
   }

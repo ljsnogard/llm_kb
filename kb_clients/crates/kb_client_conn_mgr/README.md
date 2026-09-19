@@ -12,11 +12,13 @@
 工作区
    ├─ list_workspaces()
    ├─ add_workspace(request)     目录是 kb_core 所在主机上的路径
-   └─ remove_workspace(id)       服务端级联删除它名下的会话
+   ├─ remove_workspace(id)       服务端级联删除它名下的会话
+   └─ rename_workspace(id, name) 只改展示名，磁盘目录不动
 会话
    ├─ list_sessions(workspace_id)
-   ├─ create_session(request)
-   └─ remove_session(workspace_id, session_id)
+   ├─ create_session(request)    request.turns 可以带"第一个问题"（草稿流程用）
+   ├─ remove_session(workspace_id, session_id)
+   └─ rename_session(workspace_id, session_id, title)
 正文与生成
    ├─ get_session(workspace_id, session_id)   完整正文
    └─ ask(request)                            同步一问一答（kb_core 里是临时模拟的 LLM）
@@ -84,12 +86,9 @@ let workspace = client
 - 不实现设置（`TrSettingsService`）与目录（`TrDirectoryService`）——协议那边还没落地；
 - **生成只做到"同步一问一答"**（`ask` → 提问之后的 `SessionDetail`）：流式增量与
   取消还没定义，见 `abs_kb_svc_v1_desktop::TrGeneration` 的文档；
-- **不做工作区 / 会话的"改"**（重命名、换路径）：协议里还没有
-  `UpdateWorkspace` / `RenameSession` 这两种请求。存储层其实已经具备能力
-  （`kb_core` 的 `Store::save_workspace` / `rename_session`），缺的只是协议
-  与 trait 的公开面；提案见
-  [`dev-notes/kb_admin_desktop-20260918-1712.md`](../../../dev-notes/kb_admin_desktop-20260918-1712.md)
-  §3。
+- **只做改名，不做换路径**：`rename_workspace` 只改展示名；工作区换目录需要界面与
+  目录校验，还没做。会话改名与工作区改名的协议形状见
+  [`dev-notes/kb_admin_desktop-20260919-1237.md`](../../../dev-notes/kb_admin_desktop-20260919-1237.md) §1。
 
 ## 验证
 
@@ -97,8 +96,8 @@ let workspace = client
 cargo test -p kb_client_conn_mgr
 ```
 
-2 个单元测试（超时令牌）+ 7 个集成测试（假网关：正常往返、工作区 / 会话增删、
-读正文与提问、业务错误透传、取消、坏帧判死、不可取消路径）+ 1 个文档测试。
+2 个单元测试（超时令牌）+ 8 个集成测试（假网关：正常往返、工作区 / 会话增删、
+改名、读正文与提问、业务错误透传、取消、坏帧判死、不可取消路径）+ 1 个文档测试。
 
 真进程的端到端验证用附带的小 CLI：
 

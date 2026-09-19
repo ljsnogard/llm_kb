@@ -140,6 +140,12 @@ where
                 Err(error) => business_reply_(error),
             }
         }
+        Request::RenameWorkspace { workspace_id, name } => {
+            match service.rename_workspace(workspace_id, name).await {
+                Ok(workspace) => Reply::WorkspaceRenamed(workspace),
+                Err(error) => business_reply_(error),
+            }
+        }
         Request::ListSessions { workspace_id } => match service.list_sessions(workspace_id).await {
             Ok(list) => Reply::SessionList(list),
             Err(error) => business_reply_(error),
@@ -163,6 +169,14 @@ where
             session_id,
         } => match service.remove_session(workspace_id, session_id).await {
             Ok(()) => Reply::Ack,
+            Err(error) => business_reply_(error),
+        },
+        Request::RenameSession {
+            workspace_id,
+            session_id,
+            title,
+        } => match service.rename_session(workspace_id, session_id, title).await {
+            Ok(session) => Reply::SessionRenamed(session),
             Err(error) => business_reply_(error),
         },
         other => Reply::Error(ErrorReply {
@@ -208,9 +222,11 @@ fn request_kind_(request: &Request) -> &'static str {
         Request::ListWorkspaces => "ListWorkspaces",
         Request::AddWorkspace(_) => "AddWorkspace",
         Request::RemoveWorkspace { .. } => "RemoveWorkspace",
+        Request::RenameWorkspace { .. } => "RenameWorkspace",
         Request::ListSessions { .. } => "ListSessions",
         Request::CreateSession(_) => "CreateSession",
         Request::RemoveSession { .. } => "RemoveSession",
+        Request::RenameSession { .. } => "RenameSession",
         Request::GetSession { .. } => "GetSession",
         Request::ListDirectory { .. } => "ListDirectory",
     }

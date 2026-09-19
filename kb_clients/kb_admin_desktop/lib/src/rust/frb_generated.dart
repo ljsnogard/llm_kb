@@ -67,7 +67,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -345035108;
+  int get rustContentHash => 1774291581;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -112,6 +112,8 @@ abstract class RustLibApi extends BaseApi {
   Future<SessionReport> crateApiKbCreateSession({
     required String workspaceId,
     required String title,
+    required String turnId,
+    required String question,
   });
 
   Future<void> crateApiKbDisconnect();
@@ -135,6 +137,17 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<OpReport> crateApiKbRemoveWorkspace({required String workspaceId});
+
+  Future<SessionReport> crateApiKbRenameSession({
+    required String workspaceId,
+    required String sessionId,
+    required String title,
+  });
+
+  Future<WorkspaceReport> crateApiKbRenameWorkspace({
+    required String workspaceId,
+    required String name,
+  });
 
   Future<String> crateApiKbSaveConfig({
     required String defaultName,
@@ -494,6 +507,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Future<SessionReport> crateApiKbCreateSession({
     required String workspaceId,
     required String title,
+    required String turnId,
+    required String question,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -501,6 +516,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(workspaceId, serializer);
           sse_encode_String(title, serializer);
+          sse_encode_String(turnId, serializer);
+          sse_encode_String(question, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -513,7 +530,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: null,
         ),
         constMeta: kCrateApiKbCreateSessionConstMeta,
-        argValues: [workspaceId, title],
+        argValues: [workspaceId, title, turnId, question],
         apiImpl: this,
       ),
     );
@@ -521,7 +538,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiKbCreateSessionConstMeta => const TaskConstMeta(
     debugName: "create_session",
-    argNames: ["workspaceId", "title"],
+    argNames: ["workspaceId", "title", "turnId", "question"],
   );
 
   @override
@@ -761,6 +778,76 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
+  Future<SessionReport> crateApiKbRenameSession({
+    required String workspaceId,
+    required String sessionId,
+    required String title,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(workspaceId, serializer);
+          sse_encode_String(sessionId, serializer);
+          sse_encode_String(title, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 21,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_session_report,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbRenameSessionConstMeta,
+        argValues: [workspaceId, sessionId, title],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbRenameSessionConstMeta => const TaskConstMeta(
+    debugName: "rename_session",
+    argNames: ["workspaceId", "sessionId", "title"],
+  );
+
+  @override
+  Future<WorkspaceReport> crateApiKbRenameWorkspace({
+    required String workspaceId,
+    required String name,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(workspaceId, serializer);
+          sse_encode_String(name, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 22,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_workspace_report,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiKbRenameWorkspaceConstMeta,
+        argValues: [workspaceId, name],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiKbRenameWorkspaceConstMeta => const TaskConstMeta(
+    debugName: "rename_workspace",
+    argNames: ["workspaceId", "name"],
+  );
+
+  @override
   Future<String> crateApiKbSaveConfig({
     required String defaultName,
     required List<ConnectionView> connections,
@@ -774,7 +861,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 23,
             port: port_,
           );
         },
@@ -803,7 +890,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 24,
             port: port_,
           );
         },
@@ -833,7 +920,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 23,
+            funcId: 25,
             port: port_,
           );
         },
@@ -860,7 +947,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 24,
+            funcId: 26,
             port: port_,
           );
         },
@@ -887,7 +974,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 25,
+            funcId: 27,
             port: port_,
           );
         },
@@ -917,7 +1004,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 28,
             port: port_,
           );
         },
@@ -947,7 +1034,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 29,
             port: port_,
           );
         },
@@ -974,7 +1061,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 28,
+            funcId: 30,
             port: port_,
           );
         },
@@ -1001,7 +1088,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 29,
+            funcId: 31,
             port: port_,
           );
         },
@@ -1028,7 +1115,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 30,
+            funcId: 32,
             port: port_,
           );
         },

@@ -334,6 +334,33 @@ where
     }
 }
 
+/// [`TrWorkspaceService::rename_workspace`] 的代理实现。
+#[gen_may_cancel_future(RenameWorkspace, pub)]
+pub async fn rename_workspace_async<'c, C>(
+    client: &'c Client,
+    workspace_id: WorkspaceId,
+    name: String,
+    cancel: C,
+) -> Result<Workspace, RpcError<ServoIpcError>>
+where
+    C: TrCancellationToken,
+{
+    match client
+        .request_(
+            Request::RenameWorkspace {
+                workspace_id,
+                name,
+            },
+            cancel,
+        )
+        .await?
+    {
+        Reply::WorkspaceRenamed(workspace) => Ok(workspace),
+        Reply::Error(error) => Err(RpcError::Business(error)),
+        other => Err(RpcError::Transport(unexpected_("WorkspaceRenamed", &other))),
+    }
+}
+
 /// [`TrSessionService::list_sessions`] 的代理实现。
 #[gen_may_cancel_future(ListSessions, pub)]
 pub async fn list_sessions_async<'c, C>(
@@ -480,6 +507,10 @@ impl TrWorkspaceService for Client {
         = RemoveWorkspaceAsync<'f, 'f>
     where
         Self: 'f;
+    type RenameWorkspace<'f>
+        = RenameWorkspaceAsync<'f, 'f>
+    where
+        Self: 'f;
 
     fn list_workspaces<'f>(&'f self) -> Self::ListWorkspaces<'f> {
         ListWorkspacesAsync::new(self)
@@ -491,6 +522,14 @@ impl TrWorkspaceService for Client {
 
     fn remove_workspace<'f>(&'f self, workspace_id: WorkspaceId) -> Self::RemoveWorkspace<'f> {
         RemoveWorkspaceAsync::new(self, workspace_id)
+    }
+
+    fn rename_workspace<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        name: String,
+    ) -> Self::RenameWorkspace<'f> {
+        RenameWorkspaceAsync::new(self, workspace_id, name)
     }
 }
 
@@ -509,6 +548,10 @@ impl TrSessionService for Client {
         Self: 'f;
     type RemoveSession<'f>
         = RemoveSessionAsync<'f, 'f>
+    where
+        Self: 'f;
+    type RenameSession<'f>
+        = RenameSessionAsync<'f, 'f>
     where
         Self: 'f;
 
@@ -534,6 +577,44 @@ impl TrSessionService for Client {
         session_id: SessionId,
     ) -> Self::RemoveSession<'f> {
         RemoveSessionAsync::new(self, workspace_id, session_id)
+    }
+
+    fn rename_session<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        title: String,
+    ) -> Self::RenameSession<'f> {
+        RenameSessionAsync::new(self, workspace_id, session_id, title)
+    }
+}
+
+/// [`TrSessionService::rename_session`] 的代理实现。
+#[gen_may_cancel_future(RenameSession, pub)]
+pub async fn rename_session_async<'c, C>(
+    client: &'c Client,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    title: String,
+    cancel: C,
+) -> Result<SessionSummary, RpcError<ServoIpcError>>
+where
+    C: TrCancellationToken,
+{
+    match client
+        .request_(
+            Request::RenameSession {
+                workspace_id,
+                session_id,
+                title,
+            },
+            cancel,
+        )
+        .await?
+    {
+        Reply::SessionRenamed(session) => Ok(session),
+        Reply::Error(error) => Err(RpcError::Business(error)),
+        other => Err(RpcError::Transport(unexpected_("SessionRenamed", &other))),
     }
 }
 
@@ -618,8 +699,10 @@ fn reply_kind_(reply: &Reply) -> &'static str {
         Reply::ServiceUpdated(_) => "ServiceUpdated",
         Reply::WorkspaceList(_) => "WorkspaceList",
         Reply::WorkspaceAdded { .. } => "WorkspaceAdded",
+        Reply::WorkspaceRenamed(_) => "WorkspaceRenamed",
         Reply::SessionList(_) => "SessionList",
         Reply::SessionCreated { .. } => "SessionCreated",
+        Reply::SessionRenamed(_) => "SessionRenamed",
         Reply::SessionDetail(_) => "SessionDetail",
         Reply::DirectoryListing(_) => "DirectoryListing",
         Reply::Error(_) => "Error",

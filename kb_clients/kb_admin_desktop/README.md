@@ -14,11 +14,11 @@
 | 侧边栏折叠成图标轨道 | ✅ | 300ms 滑动 + 交叉淡入淡出；窄于 1024px 自动折叠 |
 | 文件浏览器默认隐藏、按钮调出 | ✅ | 列头右上角的开关；面板从右边缘滑入，见 `widgets/app_shell.dart` |
 | **连接 `kb_core`：首次运行选连接方式 → 连上 → 看工作区 / 会话** | ✅ | 左上角是「主机名 + 切换连接」按钮；工作区与会话来自 `kb_core`，见下节 |
-| **工作区 / 会话的增删**（在 `kb_core` 所在主机上执行） | ✅ | 列表右上角 `+` 新建工作区；工作区行 / 会话行悬停出现新建与删除；见下节 |
+| **工作区 / 会话的增删**（在 `kb_core` 所在主机上执行） | ✅ | 列表右上角 `+` 新建工作区；工作区行 / 会话行悬停出现新建、改名与删除；见下节 |
 | **会话正文 + 提问** | ✅ | 选中会话读 `GetSession` 渲染到对话区；提问发给 `kb_core`（当前是临时模拟的 LLM，把问题逆序输出并落盘） |
+| **工作区 / 会话改名** | ✅ | 行悬停的改名按钮；走 `RenameWorkspace` / `RenameSession`，改动落在 `kb_core` 的记录里 |
 | 设置面板配置 LLM 服务与 API key | ✅ | 本地持久化；字段与服务端 `/api/settings*` 对齐 |
 | 工作区 / 会话 / 消息 | 🚧 | 连上 `kb_core` 后列表与正文都以服务端为准；未连接时整体退回本地 |
-| 工作区 / 会话的"改"（重命名） | ❌ | 协议里还没有 `UpdateWorkspace` / `RenameSession`，提案见 dev-note §3 |
 | 文件浏览器内容 | ❌ | 只有骨架与空状态，等 `kb_core` 提供目录接口 |
 | Markdown 渲染 | ❌ | 目前只切分 ``` 围栏为代码块，与网页端 `app.js` 的处理一致 |
 
@@ -42,11 +42,15 @@
   颜色反映状态（灰 / 黄 / 绿 / 红）。
 - **工作区列表**：连上之后显示的是 `kb_core` 的数据；每个工作区展开时会去拉
   它的会话，拉过就缓存；列表右上角是**新建工作区**与**刷新**两个按钮。
-  工作区行悬停时出现「在此工作区新建会话」与「删除工作区」；会话行悬停时
-  出现「删除会话」。删除工作区会先确认（服务端级联删掉它的会话）。
+  工作区行悬停时出现「工作区改名 / 在此工作区新建会话 / 删除工作区」；会话行
+  悬停时出现「会话改名 / 删除会话」。删除工作区会先确认（服务端级联删掉它的会话）。
 - **会话正文**：点一条会话，右侧对话区从 `GetSession` 读回它的全部消息并渲染；
   在下方输入框提问会走 `Ask`——`kb_core` 现在的回答是**把问题逆序输出**
   （临时模拟的 LLM），一问一答都会落盘，所以**重新连线仍然看得到**。
+- **「新会话」是一个草稿**：点它不会马上在 `kb_core` 上建会话——只有名字、没有
+  消息的空会话不允许落盘。用户发出第一个问题时，客户端才把那条消息作为会话的
+  首条内容提交给 `kb_core`，会话名由 `kb_core` 从**问题的前若干字**推导。会话行
+  悬停的改名按钮可以随时改标题（留空则交回服务端重新推导）。
 - **目录是 `kb_core` 所在主机上的路径**：客户端只把「名字 + 路径」提交给
   服务端，不碰自己这边的文件系统。
 - 断开/未连接时，列表与对话区退回**本地**那一套（`AppController` 里的工作区），
@@ -75,18 +79,19 @@ KB_ADMIN_DESKTOP_CONFIG=/tmp/kb-admin.toml flutter run -d linux
 它的内容就是 `kb_client_config` 的 TOML（三种 `kind` 见
 [`kb_client_conn_mgr`](../crates/kb_client_conn_mgr/README.md)）。
 
-> **当前的边界**：工作区与会话的**增 / 删 / 查**、**会话正文**与**提问**都已打通
-> （`AddWorkspace` / `RemoveWorkspace` / `ListWorkspaces`、`CreateSession` /
-> `RemoveSession` / `ListSessions` / `GetSession`、`Ask`）。还差三块：
+> **当前的边界**：工作区与会话的**增 / 删 / 改 / 查**、**会话正文**与**提问**都已
+> 打通（`AddWorkspace` / `RemoveWorkspace` / `RenameWorkspace` / `ListWorkspaces`、
+> `CreateSession` / `RemoveSession` / `RenameSession` / `ListSessions` /
+> `GetSession`、`Ask`）。还差两块：
 >
-> - **工作区 / 会话的"改"**（重命名）：协议里还没有 `UpdateWorkspace` /
->   `RenameSession` 请求，提案见
->   [`dev-notes/kb_admin_desktop-20260918-1712.md`](../../dev-notes/kb_admin_desktop-20260918-1712.md) §3；
 > - **流式生成**：现在是同步一问一答（`TrGeneration::ask` 回整份会话），
 >   换成流式形状属于公开协议变更，见
 >   [`dev-notes/kb_admin_desktop-20260918-1740.md`](../../dev-notes/kb_admin_desktop-20260918-1740.md) §2.1；
 > - **真正的多连接**：左上角可以**切换**活动连接，但同一时刻仍只有一条；
 >   "同时保持多条、各自保留缓存"还没做。
+>
+> 工作区"改路径"也没做——本轮只做了改名，见
+> [`dev-notes/kb_admin_desktop-20260919-1237.md`](../../dev-notes/kb_admin_desktop-20260919-1237.md) §5。
 
 ## Rust 侧
 
@@ -112,7 +117,9 @@ Dart 侧拿到的接口（都是 `Future`，因为 FRB 会把普通函数放到�
 | `connectTo(profile)` / `disconnect()` / `connectionState()` | 连接、断开、看当前连的是谁 |
 | `listWorkspaces()` / `listSessions(workspaceId)` | 连接之后的查询 |
 | `addWorkspace(name, path)` / `removeWorkspace(workspaceId)` | 新建 / 删除工作区；`path` 是 **kb_core 所在主机上**的目录 |
-| `createSession(workspaceId, title)` / `removeSession(workspaceId, sessionId)` | 新建 / 删除会话；`title` 为空串时由服务端推导 |
+| `renameWorkspace(workspaceId, name)` | 工作区改名（只改展示名，磁盘目录不动） |
+| `createSession(workspaceId, title, turnId, question)` / `removeSession(workspaceId, sessionId)` | 新建 / 删除会话；`turnId` 非空时把 `question` 作为首条消息一起提交（名字由服务端从问题推导） |
+| `renameSession(workspaceId, sessionId, title)` | 会话改名；`title` 只有空白时由服务端重新推导 |
 | `getSession(workspaceId, sessionId)` | 读取会话正文（摘要 + 全部消息） |
 | `ask(workspaceId, sessionId, turnId, question)` | 提问；返回提问之后的会话内容（当前是模拟 LLM 的逆序回答） |
 
@@ -283,7 +290,7 @@ lib/
 ```bash
 flutter pub get
 flutter analyze
-flutter test                        # 46 项；golden 组默认跳过
+flutter test                        # 49 项；golden 组默认跳过
 flutter run -d linux
 ```
 

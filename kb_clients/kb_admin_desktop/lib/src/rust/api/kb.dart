@@ -83,14 +83,44 @@ Future<WorkspaceReport> addWorkspace({
 Future<OpReport> removeWorkspace({required String workspaceId}) =>
     RustLib.instance.api.crateApiKbRemoveWorkspace(workspaceId: workspaceId);
 
-/// 在某个工作区下新建一个会话。
+/// 在某个工作区下新建一个会话（可选地带上**第一个问题**）。
 ///
-/// `title` 为空串时由服务端推导：新会话还没有消息，因此会落到缺省标题。
+/// 两种典型用法：
+///
+/// - `turn_id` 为空串：建一个空会话。此时 `title` **必须**非空——`kb_core` 不
+///   允许"没有消息、又只有默认名字"的会话落盘；
+/// - `turn_id` 非空：把 `question` 作为会话的第一条用户消息一起提交。`kb_core`
+///   会据此给会话起名（问题开头若干字），这正是客户端"草稿会话首次提问"的用法：
+///   紧接着再调 [`ask`]，服务端会按 `turn_id` 去重，不会重复添加这条消息。
 Future<SessionReport> createSession({
   required String workspaceId,
   required String title,
+  required String turnId,
+  required String question,
 }) => RustLib.instance.api.crateApiKbCreateSession(
   workspaceId: workspaceId,
+  title: title,
+  turnId: turnId,
+  question: question,
+);
+
+/// 重命名一个工作区（只改展示名，磁盘目录不动）。
+Future<WorkspaceReport> renameWorkspace({
+  required String workspaceId,
+  required String name,
+}) => RustLib.instance.api.crateApiKbRenameWorkspace(
+  workspaceId: workspaceId,
+  name: name,
+);
+
+/// 重命名一个会话（改标题）；`title` 只有空白时由服务端重新推导。
+Future<SessionReport> renameSession({
+  required String workspaceId,
+  required String sessionId,
+  required String title,
+}) => RustLib.instance.api.crateApiKbRenameSession(
+  workspaceId: workspaceId,
+  sessionId: sessionId,
   title: title,
 );
 

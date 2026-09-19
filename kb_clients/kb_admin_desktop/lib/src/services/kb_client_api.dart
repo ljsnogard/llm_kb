@@ -88,16 +88,36 @@ abstract class KbClientApi {
   /// 删除一个工作区（服务端会级联删除它名下的会话）。
   Future<OpReport> removeWorkspace(String workspaceId);
 
-  /// 在某个工作区下新建一个会话。
+  /// 重命名一个工作区（只改展示名，磁盘目录不动）。
+  Future<WorkspaceReport> renameWorkspace({
+    required String workspaceId,
+    required String name,
+  });
+
+  /// 在某个工作区下新建一个会话（可选地带上**第一个问题**）。
+  ///
+  /// - `turnId` 为空串：建一个空会话，此时 `title` 必须非空（`kb_core` 不允许
+  ///   "没有消息、又只有默认名字"的会话落盘）；
+  /// - `turnId` 非空：把 `question` 作为首条用户消息一起提交，名字由 `kb_core`
+  ///   从问题开头若干字推导——这正是"草稿会话首次提问"的用法。
   Future<SessionReport> createSession({
     required String workspaceId,
     required String title,
+    required String turnId,
+    required String question,
   });
 
   /// 删除一个会话。
   Future<OpReport> removeSession({
     required String workspaceId,
     required String sessionId,
+  });
+
+  /// 重命名一个会话（改标题）；`title` 只有空白时由服务端重新推导。
+  Future<SessionReport> renameSession({
+    required String workspaceId,
+    required String sessionId,
+    required String title,
   });
 
   /// 读取一个会话的完整内容（摘要 + 全部消息）。
@@ -171,16 +191,40 @@ class FrbKbClientApi implements KbClientApi {
       frb.removeWorkspace(workspaceId: workspaceId);
 
   @override
+  Future<WorkspaceReport> renameWorkspace({
+    required String workspaceId,
+    required String name,
+  }) => frb.renameWorkspace(workspaceId: workspaceId, name: name);
+
+  @override
   Future<SessionReport> createSession({
     required String workspaceId,
     required String title,
-  }) => frb.createSession(workspaceId: workspaceId, title: title);
+    required String turnId,
+    required String question,
+  }) => frb.createSession(
+    workspaceId: workspaceId,
+    title: title,
+    turnId: turnId,
+    question: question,
+  );
 
   @override
   Future<OpReport> removeSession({
     required String workspaceId,
     required String sessionId,
   }) => frb.removeSession(workspaceId: workspaceId, sessionId: sessionId);
+
+  @override
+  Future<SessionReport> renameSession({
+    required String workspaceId,
+    required String sessionId,
+    required String title,
+  }) => frb.renameSession(
+    workspaceId: workspaceId,
+    sessionId: sessionId,
+    title: title,
+  );
 
   @override
   Future<SessionDetailReport> getSession({

@@ -145,6 +145,29 @@ where
     Ok(())
 }
 
+/// 服务端：工作区改名。
+#[gen_may_cancel_future(RenameWorkspace)]
+async fn rename_workspace_async<'s, C>(
+    service: &'s TestService,
+    workspace_id: WorkspaceId,
+    name: String,
+    cancel: C,
+) -> Result<Workspace, RpcError<ServoIpcError>>
+where
+    C: TrCancellationToken,
+{
+    if cancel.is_cancelled() {
+        return Err(RpcError::Transport(ServoIpcError::Cancelled));
+    }
+    let mut inner = lock_(&service.inner_);
+    let Some(workspace) = inner.workspaces_.get_mut(workspace_id.as_str()) else {
+        drop(inner);
+        return business_(ErrorCode::NotFound, format!("工作区不存在: {workspace_id}"));
+    };
+    workspace.name = name.trim().to_string();
+    Ok(workspace.clone())
+}
+
 /// 服务端：列出会话。
 #[gen_may_cancel_future(ListSessions)]
 async fn list_sessions_async<'s, C>(
@@ -269,6 +292,33 @@ where
     Ok(())
 }
 
+/// 服务端：会话改名。
+#[gen_may_cancel_future(RenameSession)]
+async fn rename_session_async<'s, C>(
+    service: &'s TestService,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    title: String,
+    cancel: C,
+) -> Result<SessionSummary, RpcError<ServoIpcError>>
+where
+    C: TrCancellationToken,
+{
+    if cancel.is_cancelled() {
+        return Err(RpcError::Transport(ServoIpcError::Cancelled));
+    }
+    let mut inner = lock_(&service.inner_);
+    let Some(detail) = inner
+        .sessions_
+        .get_mut(&(workspace_id.to_string(), session_id.to_string()))
+    else {
+        drop(inner);
+        return business_(ErrorCode::NotFound, format!("会话不存在: {session_id}"));
+    };
+    detail.summary.title = title.trim().to_string();
+    Ok(detail.summary.clone())
+}
+
 /// 服务端：回答一次提问。
 ///
 /// 本文件只验证**通道**：这里刻意不做任何 LLM 模拟（那属于 `kb_core` 的业务），
@@ -356,6 +406,10 @@ impl TrWorkspaceService for TestService {
         = RemoveWorkspaceAsync<'f, 'f>
     where
         Self: 'f;
+    type RenameWorkspace<'f>
+        = RenameWorkspaceAsync<'f, 'f>
+    where
+        Self: 'f;
 
     fn list_workspaces<'f>(&'f self) -> Self::ListWorkspaces<'f> {
         ListWorkspacesAsync::new(self)
@@ -367,6 +421,14 @@ impl TrWorkspaceService for TestService {
 
     fn remove_workspace<'f>(&'f self, workspace_id: WorkspaceId) -> Self::RemoveWorkspace<'f> {
         RemoveWorkspaceAsync::new(self, workspace_id)
+    }
+
+    fn rename_workspace<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        name: String,
+    ) -> Self::RenameWorkspace<'f> {
+        RenameWorkspaceAsync::new(self, workspace_id, name)
     }
 }
 
@@ -385,6 +447,10 @@ impl TrSessionService for TestService {
         Self: 'f;
     type RemoveSession<'f>
         = RemoveSessionAsync<'f, 'f>
+    where
+        Self: 'f;
+    type RenameSession<'f>
+        = RenameSessionAsync<'f, 'f>
     where
         Self: 'f;
 
@@ -410,6 +476,15 @@ impl TrSessionService for TestService {
         session_id: SessionId,
     ) -> Self::RemoveSession<'f> {
         RemoveSessionAsync::new(self, workspace_id, session_id)
+    }
+
+    fn rename_session<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        title: String,
+    ) -> Self::RenameSession<'f> {
+        RenameSessionAsync::new(self, workspace_id, session_id, title)
     }
 }
 

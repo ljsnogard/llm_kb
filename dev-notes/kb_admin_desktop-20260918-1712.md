@@ -112,6 +112,14 @@
 
 ## 3. 待拍板：工作区 / 会话的"改"
 
+> **2026-09-19 12:37 已实现**：见
+> [`kb_admin_desktop-20260919-1237.md`](kb_admin_desktop-20260919-1237.md)。
+> 落地时按用户口径把范围**收窄成"改名"**，所以形状与下面的提案有两处差别：
+> 请求叫 `RenameWorkspace { workspace_id, name }`（不是 `UpdateWorkspace`，不带
+> `path`），应答是新增的 `Reply::WorkspaceRenamed(Workspace)` /
+> `Reply::SessionRenamed(SessionSummary)`；trait 方法名也相应改成
+> `rename_workspace`。**"改路径"仍然没做**。
+
 用户口径里的"增删查改"目前只做到了**增删查**——因为协议里没有"改"的请求：
 
 | 想做的操作 | 协议里有吗 | 存储层有吗 |

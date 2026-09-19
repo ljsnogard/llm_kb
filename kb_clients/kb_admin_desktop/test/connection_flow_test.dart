@@ -201,21 +201,56 @@ class _FakeApi implements KbClientApi {
   }
 
   @override
+  Future<WorkspaceReport> renameWorkspace({
+    required String workspaceId,
+    required String name,
+  }) async {
+    calls.add('renameWorkspace:$workspaceId');
+    final int index = workspaces.indexWhere(
+      (WorkspaceView item) => item.id == workspaceId,
+    );
+    final WorkspaceView renamed = WorkspaceView(
+      id: workspaceId,
+      name: name.trim(),
+      path: index >= 0 ? workspaces[index].path : '',
+    );
+    if (index >= 0) {
+      workspaces[index] = renamed;
+    }
+    return WorkspaceReport(ok: true, workspace: renamed, error: '');
+  }
+
+  @override
   Future<SessionReport> createSession({
     required String workspaceId,
     required String title,
+    required String turnId,
+    required String question,
   }) async {
     calls.add('createSession:$workspaceId');
+    final bool withQuestion = turnId.trim().isNotEmpty;
+    // 与 kb_core 同口径：没有显式标题时，从第一个问题推导。
+    final String resolvedTitle = title.trim().isNotEmpty
+        ? title.trim()
+        : (withQuestion ? question : '新会话');
     final SessionView session = SessionView(
       id: 's-new-${_sequence++}',
       workspaceId: workspaceId,
-      title: title.trim().isEmpty ? '新会话' : title.trim(),
+      title: resolvedTitle,
       updatedAtMillis: 1760000000000,
-      turnCount: 0,
+      turnCount: withQuestion ? 1 : 0,
     );
     sessions
         .putIfAbsent(workspaceId, () => <SessionView>[])
         .insert(0, session);
+    if (withQuestion) {
+      details[session.id] = SessionDetailReport(
+        ok: true,
+        session: session,
+        turns: <TurnView>[_turn(turnId, 'user', question)],
+        error: '',
+      );
+    }
     return SessionReport(ok: true, session: session, error: '');
   }
 
@@ -229,6 +264,43 @@ class _FakeApi implements KbClientApi {
       (SessionView item) => item.id == sessionId,
     );
     return const OpReport(ok: true, error: '');
+  }
+
+  @override
+  Future<SessionReport> renameSession({
+    required String workspaceId,
+    required String sessionId,
+    required String title,
+  }) async {
+    calls.add('renameSession:$sessionId');
+    final String resolved = title.trim().isNotEmpty
+        ? title.trim()
+        : _deriveTitle_(sessionId);
+    final List<SessionView>? list = sessions[workspaceId];
+    final int index =
+        list?.indexWhere((SessionView item) => item.id == sessionId) ?? -1;
+    final SessionView renamed = list != null && index >= 0
+        ? SessionView(
+            id: list[index].id,
+            workspaceId: list[index].workspaceId,
+            title: resolved,
+            updatedAtMillis: list[index].updatedAtMillis,
+            turnCount: list[index].turnCount,
+          )
+        : _session(sessionId, workspaceId, resolved);
+    if (list != null && index >= 0) {
+      list[index] = renamed;
+    }
+    final SessionDetailReport? detail = details[sessionId];
+    if (detail != null) {
+      details[sessionId] = SessionDetailReport(
+        ok: true,
+        session: renamed,
+        turns: detail.turns,
+        error: '',
+      );
+    }
+    return SessionReport(ok: true, session: renamed, error: '');
   }
 
   @override
@@ -251,16 +323,26 @@ class _FakeApi implements KbClientApi {
     required String question,
   }) async {
     calls.add('ask:$sessionId');
-    // 与 kb_core 里的临时模拟 LLM 同口径：回答是问题的逆序（按字符）。
+    // 与 kb_core 里的临时模拟 LLM 同口径：回答是问题的逆序（按字符），
+    // 且回答标识由用户回合标识确定性推导。
     final String answer = String.fromCharCodes(
       question.runes.toList().reversed,
     );
+    final String answerId = '$turnId-a';
     final SessionDetailReport current =
         details[sessionId] ?? _detailFor_(workspaceId, sessionId);
+
+    // 幂等：已经有这一轮回答就原样返回（草稿流程会先建会话带上问题，再 Ask）。
+    if (current.turns.any((TurnView turn) => turn.id == answerId)) {
+      return current;
+    }
+    final bool hasUser = current.turns.any(
+      (TurnView turn) => turn.id == turnId,
+    );
     final List<TurnView> turns = <TurnView>[
       ...current.turns,
-      _turn(turnId, 'user', question),
-      _turn('t-answer-$turnId', 'assistant', answer),
+      if (!hasUser) _turn(turnId, 'user', question),
+      _turn(answerId, 'assistant', answer),
     ];
     final SessionDetailReport next = SessionDetailReport(
       ok: true,
@@ -286,6 +368,17 @@ class _FakeApi implements KbClientApi {
       list[index] = next.session;
     }
     return next;
+  }
+
+  /// 空白改名时的退路：取首条用户消息（与 `kb_core` 的推导口径一致）。
+  String _deriveTitle_(String sessionId) {
+    for (final TurnView turn
+        in details[sessionId]?.turns ?? const <TurnView>[]) {
+      if (turn.role == 'user' && turn.text.trim().isNotEmpty) {
+        return turn.text.trim();
+      }
+    }
+    return '新会话';
   }
 
   /// 没拉过正文时给一个空会话。
@@ -565,24 +658,97 @@ void main() {
     );
   });
 
-  /// 测试新建会话：服务端分配标识之后，该工作区的会话缓存被刷新。
+  /// 测试草稿会话：点「新会话」只改客户端状态，首次提问才真的建会话。
   ///
-  /// - 手段：连上之后对 `w-1` 调 `addSession`。
-  /// - 判断：假接口收到 `createSession:w-1`；`sessionsOf('w-1')` 的第一条是新会话
-  ///   （标题落到服务端缺省的「新会话」）、`turnCount` 为 0；`w-1` 被选中。
-  test('新建会话后刷新该工作区的会话列表', () async {
+  /// - 手段：连上之后 `startDraftSession('w-1')`，确认这时**没有任何请求**；
+  ///   然后 `ask('你好世界')`。
+  /// - 判断：草稿期间 `createSession` 没被调用、也没有新会话；提问之后假接口先收到
+  ///   `createSession:w-1` 再收到 `ask:`，会话名字由假服务端从问题推导，
+  ///   正文两回合（问题 + 逆序回答）——`turn_id` 去重生效，问题只记了一次。
+  test('草稿会话首次提问才创建并落盘', () async {
     final _FakeApi api = _FakeApi(profiles: <ConnectionView>[_profile('本机')]);
     final ConnectionController connection = ConnectionController(api);
     await connection.initialize();
 
-    final String error = await connection.addSession('w-1');
+    final String draftError = await connection.startDraftSession('w-1');
+    expect(draftError, isEmpty);
+    expect(connection.draftingSession, isTrue);
+    expect(connection.selectedSessionId, isNull);
+    expect(
+      api.calls.where((String call) => call.startsWith('createSession')),
+      isEmpty,
+      reason: '草稿阶段不应当请求服务端',
+    );
+
+    final String error = await connection.ask('你好世界');
 
     expect(error, isEmpty);
-    expect(api.calls, contains('createSession:w-1'));
-    final List<SessionView> sessions = connection.sessionsOf('w-1');
-    expect(sessions.first.title, '新会话');
-    expect(sessions.first.turnCount, 0);
-    expect(connection.selectedWorkspaceId, 'w-1');
+    expect(connection.draftingSession, isFalse);
+    expect(
+      api.calls.indexOf('createSession:w-1'),
+      lessThan(api.calls.indexWhere((String call) => call.startsWith('ask:'))),
+    );
+
+    final String? sessionId = connection.selectedSessionId;
+    expect(sessionId, isNotNull);
+    expect(connection.selectedServerSession?.title, '你好世界');
+    final SessionDetailReport? detail = connection.sessionDetailOf(sessionId!);
+    expect(detail, isNotNull);
+    expect(detail!.turns.length, 2);
+    expect(detail.turns[0].text, '你好世界');
+    expect(detail.turns[1].text, '界世好你');
+  });
+
+  /// 测试工作区改名：提交给服务端并刷新列表。
+  ///
+  /// - 手段：连上之后对 `w-1` 调 `renameWorkspace('新名字')`。
+  /// - 判断：返回空串；假接口收到 `renameWorkspace:w-1`；列表里那条工作区的名字
+  ///   变成新的、标识不变。
+  test('工作区改名后列表更新', () async {
+    final _FakeApi api = _FakeApi(profiles: <ConnectionView>[_profile('本机')]);
+    final ConnectionController connection = ConnectionController(api);
+    await connection.initialize();
+
+    final String error = await connection.renameWorkspace('w-1', '新名字');
+
+    expect(error, isEmpty);
+    expect(api.calls, contains('renameWorkspace:w-1'));
+    final WorkspaceView renamed = connection.workspaces.firstWhere(
+      (WorkspaceView item) => item.id == 'w-1',
+    );
+    expect(renamed.name, '新名字');
+  });
+
+  /// 测试会话改名：提交给服务端并刷新该工作区的会话列表。
+  ///
+  /// - 手段：连上之后对 `s-w-1` 调 `renameSession('我的标题')`。
+  /// - 判断：返回空串；假接口收到 `renameSession:s-w-1`；列表里那条会话的标题
+  ///   变成新的；空白标题则回落到从首条用户消息推导。
+  test('会话改名后列表更新且空白标题回落', () async {
+    final _FakeApi api = _FakeApi(profiles: <ConnectionView>[_profile('本机')]);
+    final ConnectionController connection = ConnectionController(api);
+    await connection.initialize();
+
+    final String error = await connection.renameSession(
+      'w-1',
+      's-w-1',
+      '我的标题',
+    );
+    expect(error, isEmpty);
+    expect(api.calls, contains('renameSession:s-w-1'));
+    expect(
+      connection
+          .sessionsOf('w-1')
+          .firstWhere((SessionView item) => item.id == 's-w-1')
+          .title,
+      '我的标题',
+    );
+
+    // 先问一句，再清空标题：服务端会从首条用户消息重新取名。
+    await connection.selectSession('w-1', 's-w-1');
+    await connection.ask('你好世界');
+    await connection.renameSession('w-1', 's-w-1', '   ');
+    expect(connection.selectedServerSession?.title, '你好世界');
   });
 
   /// 测试删除会话：删掉之后刷新该工作区的列表，别的会话不受影响。
@@ -761,5 +927,43 @@ void main() {
     expect(api.calls, contains('ask:s-w-1'));
     expect(find.text('你好'), findsWidgets);
     expect(find.text('好你'), findsOneWidget);
+  });
+
+  /// 测试界面上的草稿会话：点「新会话」→ 输入第一个问题 → 会话才被创建。
+  ///
+  /// - 手段：连上假接口、渲染应用；点侧边栏顶部的「新会话」按钮，直接在输入框里
+  ///   输入问题并发送。
+  /// - 判断：假接口先收到 `createSession:w-1` 再收到 `ask:`；会话列表里出现一条
+  ///   以问题为标题的会话；对话区显示问题与逆序回答。
+  testWidgets('点「新会话」后第一个问题才创建会话', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final _FakeApi api = _FakeApi(profiles: <ConnectionView>[_profile('本机')]);
+    final ConnectionController connection = ConnectionController(api);
+    await connection.initialize();
+
+    final AppController app = await _appController();
+    await tester.pumpWidget(
+      KbAdminApp(controller: app, connection: connection),
+    );
+    await tester.pumpAndSettle();
+
+    // 展开态与折叠轨道各有一个「新会话」按钮（都在树里，靠不透明度切换），
+    // 这里点展开态的那个。
+    await tester.tap(find.byTooltip('新会话').first);
+    await tester.pumpAndSettle();
+    expect(connection.draftingSession, isTrue);
+
+    await tester.enterText(find.byType(TextField), '你好世界');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(SendArrowIcon));
+    await tester.pumpAndSettle();
+
+    expect(api.calls, contains('createSession:w-1'));
+    expect(connection.draftingSession, isFalse);
+    expect(connection.selectedServerSession?.title, '你好世界');
+    expect(find.text('界世好你'), findsOneWidget);
   });
 }

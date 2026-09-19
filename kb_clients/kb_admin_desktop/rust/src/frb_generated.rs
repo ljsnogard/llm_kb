@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -345035108;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1774291581;
 
 // Section: executor
 
@@ -437,11 +437,17 @@ fn wire__crate__api__kb__create_session_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_workspace_id = <String>::sse_decode(&mut deserializer);
             let api_title = <String>::sse_decode(&mut deserializer);
+            let api_turn_id = <String>::sse_decode(&mut deserializer);
+            let api_question = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, ()>((move || {
-                    let output_ok =
-                        Ok::<_, ()>(crate::api::kb::create_session(api_workspace_id, api_title))?;
+                    let output_ok = Ok::<_, ()>(crate::api::kb::create_session(
+                        api_workspace_id,
+                        api_title,
+                        api_turn_id,
+                        api_question,
+                    ))?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -713,6 +719,80 @@ fn wire__crate__api__kb__remove_workspace_impl(
                 transform_result_sse::<_, ()>((move || {
                     let output_ok =
                         Ok::<_, ()>(crate::api::kb::remove_workspace(api_workspace_id))?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__kb__rename_session_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rename_session",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_workspace_id = <String>::sse_decode(&mut deserializer);
+            let api_session_id = <String>::sse_decode(&mut deserializer);
+            let api_title = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::kb::rename_session(
+                        api_workspace_id,
+                        api_session_id,
+                        api_title,
+                    ))?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__kb__rename_workspace_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rename_workspace",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_workspace_id = <String>::sse_decode(&mut deserializer);
+            let api_name = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok =
+                        Ok::<_, ()>(crate::api::kb::rename_workspace(api_workspace_id, api_name))?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -1422,25 +1502,27 @@ fn pde_ffi_dispatcher_primary_impl(
         18 => wire__crate__api__kb__op_report_default_impl(port, ptr, rust_vec_len, data_len),
         19 => wire__crate__api__kb__remove_session_impl(port, ptr, rust_vec_len, data_len),
         20 => wire__crate__api__kb__remove_workspace_impl(port, ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__kb__save_config_impl(port, ptr, rust_vec_len, data_len),
-        22 => wire__crate__api__kb__session_detail_report_default_impl(
+        21 => wire__crate__api__kb__rename_session_impl(port, ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__kb__rename_workspace_impl(port, ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__kb__save_config_impl(port, ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__kb__session_detail_report_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        23 => wire__crate__api__kb__session_report_default_impl(port, ptr, rust_vec_len, data_len),
-        24 => wire__crate__api__kb__session_view_default_impl(port, ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__kb__sessions_report_default_impl(port, ptr, rust_vec_len, data_len),
-        26 => {
+        25 => wire__crate__api__kb__session_report_default_impl(port, ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__kb__session_view_default_impl(port, ptr, rust_vec_len, data_len),
+        27 => wire__crate__api__kb__sessions_report_default_impl(port, ptr, rust_vec_len, data_len),
+        28 => {
             wire__crate__api__kb__suggested_local_connection_impl(port, ptr, rust_vec_len, data_len)
         }
-        27 => wire__crate__api__kb__turn_view_default_impl(port, ptr, rust_vec_len, data_len),
-        28 => {
+        29 => wire__crate__api__kb__turn_view_default_impl(port, ptr, rust_vec_len, data_len),
+        30 => {
             wire__crate__api__kb__workspace_report_default_impl(port, ptr, rust_vec_len, data_len)
         }
-        29 => wire__crate__api__kb__workspace_view_default_impl(port, ptr, rust_vec_len, data_len),
-        30 => {
+        31 => wire__crate__api__kb__workspace_view_default_impl(port, ptr, rust_vec_len, data_len),
+        32 => {
             wire__crate__api__kb__workspaces_report_default_impl(port, ptr, rust_vec_len, data_len)
         }
         _ => unreachable!(),

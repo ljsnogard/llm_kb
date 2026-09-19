@@ -249,6 +249,15 @@ impl KbClient {
         RemoveWorkspaceAsync::new(self, workspace_id)
     }
 
+    /// 重命名一个工作区（只改展示名，磁盘目录不动）。
+    pub fn rename_workspace<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        name: String,
+    ) -> RenameWorkspaceAsync<'f, 'f> {
+        RenameWorkspaceAsync::new(self, workspace_id, name)
+    }
+
     /// 在某个工作区下新建一个会话，标识由 `kb_core` 分配。
     ///
     /// [`CreateSessionRequest::turns`] 是客户端离线期间攒下的历史，连上之后新建
@@ -267,6 +276,16 @@ impl KbClient {
         session_id: SessionId,
     ) -> RemoveSessionAsync<'f, 'f> {
         RemoveSessionAsync::new(self, workspace_id, session_id)
+    }
+
+    /// 重命名一个会话（改标题）；`title` 只有空白时由服务端重新推导。
+    pub fn rename_session<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        title: String,
+    ) -> RenameSessionAsync<'f, 'f> {
+        RenameSessionAsync::new(self, workspace_id, session_id, title)
     }
 
     /// 读取一个会话的完整内容（摘要 + 全部消息）。
@@ -418,6 +437,36 @@ where
     }
 }
 
+/// [`KbClient::rename_workspace`] 的实现体。
+#[gen_may_cancel_future(RenameWorkspace, pub)]
+async fn rename_workspace_async<'c, C>(
+    client: &'c KbClient,
+    workspace_id: WorkspaceId,
+    name: String,
+    cancel: C,
+) -> Result<Workspace, ClientError>
+where
+    C: TrCancellationToken,
+{
+    match client
+        .request_(
+            Request::RenameWorkspace {
+                workspace_id,
+                name,
+            },
+            cancel,
+        )
+        .await?
+    {
+        Reply::WorkspaceRenamed(workspace) => Ok(workspace),
+        Reply::Error(error) => Err(ClientError::Business(error)),
+        other => Err(ClientError::UnexpectedReply {
+            expected: "WorkspaceRenamed",
+            got: reply_kind_(&other),
+        }),
+    }
+}
+
 /// [`KbClient::create_session`] 的实现体。
 #[gen_may_cancel_future(CreateSession, pub)]
 async fn create_session_async<'c, C>(
@@ -467,6 +516,38 @@ where
         Reply::Error(error) => Err(ClientError::Business(error)),
         other => Err(ClientError::UnexpectedReply {
             expected: "Ack",
+            got: reply_kind_(&other),
+        }),
+    }
+}
+
+/// [`KbClient::rename_session`] 的实现体。
+#[gen_may_cancel_future(RenameSession, pub)]
+async fn rename_session_async<'c, C>(
+    client: &'c KbClient,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    title: String,
+    cancel: C,
+) -> Result<SessionSummary, ClientError>
+where
+    C: TrCancellationToken,
+{
+    match client
+        .request_(
+            Request::RenameSession {
+                workspace_id,
+                session_id,
+                title,
+            },
+            cancel,
+        )
+        .await?
+    {
+        Reply::SessionRenamed(session) => Ok(session),
+        Reply::Error(error) => Err(ClientError::Business(error)),
+        other => Err(ClientError::UnexpectedReply {
+            expected: "SessionRenamed",
             got: reply_kind_(&other),
         }),
     }

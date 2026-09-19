@@ -157,6 +157,15 @@ pub enum Request {
         workspace_id: WorkspaceId,
     },
 
+    /// 重命名一个工作区（只改展示名，不动磁盘目录）。
+    RenameWorkspace {
+        /// 要改名的工作区。
+        workspace_id: WorkspaceId,
+
+        /// 新名字。空白会被服务端拒绝：工作区没有"从消息推导名字"这条退路。
+        name: String,
+    },
+
     /// 列出某个工作区下的会话。
     ListSessions {
         /// 目标工作区。
@@ -173,6 +182,18 @@ pub enum Request {
 
         /// 要删除的会话。
         session_id: SessionId,
+    },
+
+    /// 重命名一个会话（改标题）。
+    RenameSession {
+        /// 目标工作区。
+        workspace_id: WorkspaceId,
+
+        /// 要改名的会话。
+        session_id: SessionId,
+
+        /// 新标题。空白表示"交回服务端重新推导"（取首条用户消息，取不到就是默认名）。
+        title: String,
     },
 
     /// 读取一个会话的完整内容（含全部消息）。

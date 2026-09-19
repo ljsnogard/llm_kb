@@ -12,10 +12,10 @@
 
 > **当前状态：首批数据定义与首批异步 RPC trait 已落地。**
 > [`src/lib.rs`](src/lib.rs) 已经给出桌面客户端与 `kb_core` 之间的
-> 通信数据（15 个请求 / 11 个应答 / 9 个事件），并有单元测试与文档测试覆盖。
+> 通信数据（17 个请求 / 13 个应答 / 9 个事件），并有单元测试与文档测试覆盖。
 > [`src/rpc_.rs`](src/rpc_.rs) 已给出**按业务域拆分的异步
 > RPC trait** 的第一批：`TrKbEndpoint`、`RpcError`、`TrHandshake`、
-> `TrWorkspaceService`、`TrSessionService`（工作区与会话的七条增删查改）、
+> `TrWorkspaceService`、`TrSessionService`（工作区与会话的九条增删查改）、
 > `TrGeneration`（生成域，目前只有同步的 `ask`），并由
 > [`tests/rpc_contract.rs`](tests/rpc_contract.rs) 用一份 `gen_mcf2` 展开的 mock
 > 实现守住契约。
@@ -125,8 +125,8 @@
 | `TrKbEndpoint` | 所有按域 trait 的公共基底，只定义实现方的错误类型 |
 | `RpcError<E>` | 一次调用的失败：`Business(ErrorReply)` / `Transport(E)` 两个变体 |
 | `TrHandshake` | **应用层握手**：`hello(ClientInfo) -> ServerInfo`（协议要求的第一条请求） |
-| `TrWorkspaceService` | 工作区的增删查（3 个方法） |
-| `TrSessionService` | 会话的增删查改（4 个方法） |
+| `TrWorkspaceService` | 工作区的增删查改（4 个方法：列表 / 新增 / 删除 / 改名） |
+| `TrSessionService` | 会话的增删查改（5 个方法：列表 / 新建 / 读取 / 删除 / 改名） |
 | `TrGeneration` | 生成域：目前只有同步的 `ask`（一问一答）；流式与取消待定 |
 | `TrKbService` | 上面几个的组合 trait（服务端实现与客户端代理都实现它） |
 

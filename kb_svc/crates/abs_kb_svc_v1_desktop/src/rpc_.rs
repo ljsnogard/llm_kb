@@ -186,9 +186,10 @@ where
     }
 }
 
-/// **工作区**域：工作区的增删查。
+/// **工作区**域：工作区的增删查改。
 ///
-/// 对应协议里的 `Request::ListWorkspaces` / `AddWorkspace` / `RemoveWorkspace`。
+/// 对应协议里的 `Request::ListWorkspaces` / `AddWorkspace` / `RemoveWorkspace` /
+/// `RenameWorkspace`。
 pub trait TrWorkspaceService: TrKbEndpoint {
     /// [`TrWorkspaceService::list_workspaces`] 返回的可取消 future。
     type ListWorkspaces<'f>: TrMayCancel<'f, MayCancelOutput = Result<WorkspaceList, RpcError<Self::Error>>>
@@ -205,6 +206,11 @@ pub trait TrWorkspaceService: TrKbEndpoint {
     where
         Self: 'f;
 
+    /// [`TrWorkspaceService::rename_workspace`] 返回的可取消 future。
+    type RenameWorkspace<'f>: TrMayCancel<'f, MayCancelOutput = Result<Workspace, RpcError<Self::Error>>>
+    where
+        Self: 'f;
+
     /// 列出全部工作区。
     fn list_workspaces<'f>(&'f self) -> Self::ListWorkspaces<'f>;
 
@@ -216,6 +222,13 @@ pub trait TrWorkspaceService: TrKbEndpoint {
 
     /// 删除一个工作区（连同它名下的会话）。
     fn remove_workspace<'f>(&'f self, workspace_id: WorkspaceId) -> Self::RemoveWorkspace<'f>;
+
+    /// 重命名一个工作区（只改展示名，磁盘目录不动），回改名之后的工作区。
+    fn rename_workspace<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        name: String,
+    ) -> Self::RenameWorkspace<'f>;
 }
 
 /// **会话**域：会话的增删查改。
@@ -244,6 +257,11 @@ pub trait TrSessionService: TrKbEndpoint {
     where
         Self: 'f;
 
+    /// [`TrSessionService::rename_session`] 返回的可取消 future。
+    type RenameSession<'f>: TrMayCancel<'f, MayCancelOutput = Result<SessionSummary, RpcError<Self::Error>>>
+    where
+        Self: 'f;
+
     /// 列出某个工作区下的会话（只含摘要）。
     fn list_sessions<'f>(&'f self, workspace_id: WorkspaceId) -> Self::ListSessions<'f>;
 
@@ -263,6 +281,17 @@ pub trait TrSessionService: TrKbEndpoint {
         workspace_id: WorkspaceId,
         session_id: SessionId,
     ) -> Self::RemoveSession<'f>;
+
+    /// 重命名一个会话（改标题），回改名之后的会话摘要。
+    ///
+    /// `title` 为空白时由服务端**重新推导**（取首条用户消息），因此它也可以
+    /// 用来"清掉手工起的名字"。
+    fn rename_session<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        title: String,
+    ) -> Self::RenameSession<'f>;
 }
 
 /// **生成**域：提问（以及将来围绕一次生成的取消与事件订阅）。

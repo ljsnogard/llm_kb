@@ -100,8 +100,11 @@ class _ServerWorkspaceListState extends State<ServerWorkspaceList> {
                           _collapsed.add(workspace.id);
                         }
                       }),
-                      onAddSession: () => _addSession_(workspace),
+                      onAddSession: () => _startDraftSession_(workspace),
+                      onRenameWorkspace: () => _renameWorkspace_(workspace),
                       onRemoveWorkspace: () => _removeWorkspace_(workspace),
+                      onRenameSession: (SessionView session) =>
+                          _renameSession_(workspace, session),
                       onRemoveSession: (SessionView session) =>
                           _removeSession_(workspace, session),
                     );
@@ -148,9 +151,54 @@ class _ServerWorkspaceListState extends State<ServerWorkspaceList> {
     _report_(error);
   }
 
-  /// 在某个工作区里新建一个会话。
-  Future<void> _addSession_(WorkspaceView workspace) async {
-    final String error = await widget.connection.addSession(workspace.id);
+  /// 在某个工作区里开一个草稿会话（不发请求：等用户发出第一条消息才落盘）。
+  Future<void> _startDraftSession_(WorkspaceView workspace) async {
+    final String error = await widget.connection.startDraftSession(workspace.id);
+    _report_(error);
+  }
+
+  /// 重命名一个工作区。
+  Future<void> _renameWorkspace_(WorkspaceView workspace) async {
+    final String? name = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => _RenameDialog(
+        title: '工作区改名',
+        label: '名字',
+        initial: workspace.name,
+      ),
+    );
+    if (name == null) {
+      return;
+    }
+    final String error = await widget.connection.renameWorkspace(
+      workspace.id,
+      name,
+    );
+    _report_(error);
+  }
+
+  /// 重命名一个会话。
+  Future<void> _renameSession_(
+    WorkspaceView workspace,
+    SessionView session,
+  ) async {
+    final String? title = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => _RenameDialog(
+        title: '会话改名',
+        label: '标题',
+        initial: session.title,
+        hint: '留空则由服务端从第一个问题重新取名',
+      ),
+    );
+    if (title == null) {
+      return;
+    }
+    final String error = await widget.connection.renameSession(
+      workspace.id,
+      session.id,
+      title,
+    );
     _report_(error);
   }
 
@@ -243,7 +291,9 @@ class _WorkspaceTile extends StatefulWidget {
     required this.connection,
     required this.onToggleExpanded,
     required this.onAddSession,
+    required this.onRenameWorkspace,
     required this.onRemoveWorkspace,
+    required this.onRenameSession,
     required this.onRemoveSession,
   });
 
@@ -252,7 +302,9 @@ class _WorkspaceTile extends StatefulWidget {
   final ConnectionController connection;
   final VoidCallback onToggleExpanded;
   final VoidCallback onAddSession;
+  final VoidCallback onRenameWorkspace;
   final VoidCallback onRemoveWorkspace;
+  final void Function(SessionView session) onRenameSession;
   final void Function(SessionView session) onRemoveSession;
 
   @override
@@ -335,6 +387,13 @@ class _WorkspaceTileState extends State<_WorkspaceTile> {
                         ),
                       ),
                       DswIconButton(
+                        tooltip: '工作区改名',
+                        size: 24,
+                        iconSize: 16,
+                        icon: Icons.drive_file_rename_outline,
+                        onPressed: widget.onRenameWorkspace,
+                      ),
+                      DswIconButton(
                         tooltip: '在此工作区新建会话',
                         size: 24,
                         iconSize: 16,
@@ -370,6 +429,7 @@ class _WorkspaceTileState extends State<_WorkspaceTile> {
                 session: session,
                 selected: connection.selectedSessionId == session.id,
                 onTap: () => connection.selectSession(workspace.id, session.id),
+                onRename: () => widget.onRenameSession(session),
                 onDelete: () => widget.onRemoveSession(session),
               ),
       ],
@@ -383,12 +443,14 @@ class _SessionRow extends StatelessWidget {
     required this.session,
     required this.selected,
     required this.onTap,
+    required this.onRename,
     required this.onDelete,
   });
 
   final SessionView session;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback onRename;
   final VoidCallback onDelete;
 
   @override
@@ -419,6 +481,13 @@ class _SessionRow extends StatelessWidget {
             title: session.title,
             trailing: hovered
                 ? <Widget>[
+                    DswIconButton(
+                      tooltip: '会话改名',
+                      size: 24,
+                      iconSize: 16,
+                      icon: Icons.drive_file_rename_outline,
+                      onPressed: onRename,
+                    ),
                     DswIconButton(
                       tooltip: '删除会话',
                       size: 24,
@@ -526,6 +595,68 @@ class _ConfirmDialog extends StatelessWidget {
         DswPrimaryButton(
           label: confirmLabel,
           onPressed: () => Navigator.of(context).pop(true),
+        ),
+      ],
+    );
+  }
+}
+
+/// 通用改名对话框；点「保存」返回输入框里的文本（原样，含空白），取消返回 `null`。
+class _RenameDialog extends StatefulWidget {
+  const _RenameDialog({
+    required this.title,
+    required this.label,
+    required this.initial,
+    this.hint = '',
+  });
+
+  final String title;
+  final String label;
+  final String initial;
+  final String hint;
+
+  @override
+  State<_RenameDialog> createState() => _RenameDialogState();
+}
+
+class _RenameDialogState extends State<_RenameDialog> {
+  late final TextEditingController _text = TextEditingController(
+    text: widget.initial,
+  );
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final DswColors c = context.dsw;
+    return AlertDialog(
+      backgroundColor: c.bgLayer2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: Text(
+        widget.title,
+        style: DswTypography.body.copyWith(
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          color: c.labelPrimary,
+        ),
+      ),
+      content: DswLabeledField(
+        label: widget.label,
+        controller: _text,
+        hint: widget.hint,
+      ),
+      actions: <Widget>[
+        DswGhostButton(
+          label: '取消',
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        DswPrimaryButton(
+          label: '保存',
+          onPressed: () => Navigator.of(context).pop(_text.text),
         ),
       ],
     );

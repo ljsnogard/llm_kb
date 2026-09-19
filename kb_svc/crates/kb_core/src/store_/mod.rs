@@ -22,7 +22,7 @@
 //! **存储格式与线上格式同源**，不引入第二套结构，因此不会出现"能存进去、
 //! 却发不出去"的字段。
 //!
-//! # 三条硬性约定
+//! # 四条硬性约定
 //!
 //! 1. **标识必须能安全地当文件名**：只允许 ASCII 字母、数字、`-`、`_`，且不超过
 //!    128 字节。协议把标识当作不透明字符串，因此不能假定它一定由
@@ -32,6 +32,11 @@
 //! 3. **会话属于工作区**：`create_session` / `list_sessions` 会先确认工作区存在；
 //!    删除工作区会级联删除它的会话目录。工作区不存在时 `list_sessions`
 //!    **返回错误而不是空列表**——否则客户端把标识写错时会误以为"这里没有会话"。
+//! 4. **空会话不落盘**：一个会话要么有消息，要么有一个**非默认**的名字
+//!    （默认名是 [`DEFAULT_TITLE_`]「新会话」，见 [`normalize_title_`]）；
+//!    两者都不满足时 `create_session` / `save_session` 返回
+//!    [`StoreError::EmptySession`]。这样"新建会话"必须等第一次提问（或先起个名字）
+//!    才会在磁盘上出现，不会留下一堆空的「新会话」。
 //!
 //! # 每个操作都是可取消的
 //!
@@ -152,6 +157,18 @@ impl Store {
         workspace_id: &'f WorkspaceId,
     ) -> RemoveWorkspaceAsync<'f, 'f> {
         RemoveWorkspaceAsync::new(self, workspace_id)
+    }
+
+    /// 重命名一个工作区（只改展示名，**不碰磁盘目录**），返回改名之后的工作区。
+    ///
+    /// 名字只有空白时返回 [`StoreError::EmptyName`]：工作区没有"从消息推导名字"
+    /// 这条退路，空名字会让它在界面上无法辨认。
+    pub fn rename_workspace<'f>(
+        &'f self,
+        workspace_id: &'f WorkspaceId,
+        name: &'f str,
+    ) -> RenameWorkspaceAsync<'f, 'f> {
+        RenameWorkspaceAsync::new(self, workspace_id, name)
     }
 
     // ── 会话 ────────────────────────────────────────────────────────────
@@ -382,6 +399,34 @@ where
     .await
 }
 
+/// [`Store::rename_workspace`] 的操作体。
+#[gen_may_cancel_future(RenameWorkspace, pub)]
+pub async fn rename_workspace_async<'s, C>(
+    store: &'s Store,
+    workspace_id: &'s WorkspaceId,
+    name: &'s str,
+    cancel: C,
+) -> Result<Workspace, StoreError>
+where
+    C: TrCancellationToken,
+{
+    cancel_guard_(&cancel)?;
+    race_cancel_(
+        async move {
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                return Err(StoreError::EmptyName { kind: "工作区" });
+            }
+            let mut workspace = store.get_workspace(workspace_id).await?;
+            workspace.name = trimmed.to_string();
+            store.save_workspace(&workspace).await?;
+            Ok(workspace)
+        },
+        cancel,
+    )
+    .await
+}
+
 /// [`Store::list_sessions`] 的操作体。
 #[gen_may_cancel_future(ListSessions, pub)]
 pub async fn list_sessions_async<'s, C>(
@@ -458,10 +503,13 @@ where
         async move {
             store.get_workspace(workspace_id).await?;
 
+            let title = normalize_title_(title, &turns);
+            ensure_persistable_(title.as_str(), &turns)?;
+
             let summary = SessionSummary {
                 session_id: SessionId::generate(),
                 workspace_id: workspace_id.clone(),
-                title: normalize_title_(title, &turns),
+                title,
                 updated_at_millis: now_millis_(),
                 turn_count: turn_count_of_(&turns),
             };
@@ -492,6 +540,8 @@ where
         async move {
             check_id_("工作区", detail.summary.workspace_id.as_str())?;
             check_id_("会话", detail.summary.session_id.as_str())?;
+            // 第 4 条约定：空会话（没有消息、又只有默认名）不落盘。
+            ensure_persistable_(detail.summary.title.as_str(), &detail.turns)?;
 
             let dir = sessions_dir_(&store.root_, detail.summary.workspace_id.as_str());
             create_dir_all_(&dir).await?;
@@ -798,6 +848,18 @@ fn turn_count_of_(turns: &[Turn]) -> u32 {
     u32::try_from(turns.len()).unwrap_or(u32::MAX)
 }
 
+/// 第 4 条约定：会话要么有消息，要么有一个非默认的名字，否则不许落盘。
+///
+/// 抽成函数是为了让 `create_session` 与 `save_session` 共用同一份判断。
+/// 后者是 `append_turns` / `rename_session` 的落盘入口，所以这条约定在这里绕不过去：
+/// 一个"空的「新会话」"无论从哪个入口都进不了磁盘。
+fn ensure_persistable_(title: &str, turns: &[Turn]) -> Result<(), StoreError> {
+    if turns.is_empty() && title == DEFAULT_TITLE_ {
+        return Err(StoreError::EmptySession);
+    }
+    Ok(())
+}
+
 /// 决定会话标题：优先用显式标题，否则从首条用户消息推导。
 fn normalize_title_(title: Option<String>, turns: &[Turn]) -> String {
     if let Some(title) = title {
@@ -1034,12 +1096,13 @@ mod tests_ {
         assert_eq!(detail.summary, summary);
     }
 
-    /// 测试没有可用消息时标题回落到缺省值，显式标题优先。
+    /// 测试标题推导：显式标题优先，没有用户消息时回落到缺省值。
     ///
-    /// - 手段：分别用空消息 + `None`、空消息 + 显式标题、以及只有助手消息三种输入
-    ///   新建会话。
-    /// - 判断：标题依次是 `新会话`、显式标题、`新会话`——推导逻辑不会把助手消息
-    ///   当成用户问题。
+    /// - 手段：分别用"空消息 + `None`"（应当被拒）、"空消息 + 显式标题"、
+    ///   以及"只有助手消息 + 空白标题"三种输入新建会话。
+    /// - 判断：第一种是 [`StoreError::EmptySession`]（空的新会话不落盘，见第 4 条
+    ///   约定）；第二种标题就是显式标题；第三种回落到 `新会话`——推导逻辑不会把
+    ///   助手消息当成用户问题，但只要会话有内容就允许落盘。
     #[compio::test]
     async fn session_title_falls_back_and_prefers_explicit_() {
         let (_guard, root) = temp_root_();
@@ -1049,11 +1112,14 @@ mod tests_ {
             .await
             .expect("应当能新增工作区");
 
-        let empty = store
+        let error = store
             .create_session(&workspace.workspace_id, None, Vec::new())
             .await
-            .expect("应当能新建会话");
-        assert_eq!(empty.title, DEFAULT_TITLE_);
+            .expect_err("空的新会话不该能建");
+        assert!(
+            matches!(error, StoreError::EmptySession),
+            "实际错误: {error}"
+        );
 
         let explicit = store
             .create_session(
@@ -1074,6 +1140,97 @@ mod tests_ {
             .await
             .expect("应当能新建会话");
         assert_eq!(assistant_only.title, DEFAULT_TITLE_);
+    }
+
+    /// 测试第 4 条约定：空的「新会话」进不了磁盘，但有名字的空会话可以。
+    ///
+    /// - 手段：分别用 `None` 与显式名字创建空会话，再看 `list_sessions`。
+    /// - 判断：前者是 [`StoreError::EmptySession`] 且列表里没有多出任何东西；
+    ///   后者成功、名字就是给的那个、`turn_count` 为 0。
+    #[compio::test]
+    async fn empty_session_needs_a_custom_name_() {
+        let (_guard, root) = temp_root_();
+        let store = Store::open(&root).await.expect("应当能打开存储");
+        let workspace = store
+            .add_workspace("笔记", "/tmp/notes")
+            .await
+            .expect("应当能新增工作区");
+
+        let error = store
+            .create_session(&workspace.workspace_id, None, Vec::new())
+            .await
+            .expect_err("没名字又没消息的会话不该落盘");
+        assert!(
+            matches!(error, StoreError::EmptySession),
+            "实际错误: {error}"
+        );
+        assert!(
+            store
+                .list_sessions(&workspace.workspace_id)
+                .await
+                .expect("应当能列会话")
+                .sessions
+                .is_empty(),
+            "被拒的会话不应当留下任何文件"
+        );
+
+        let named = store
+            .create_session(
+                &workspace.workspace_id,
+                Some("我的会话".to_string()),
+                Vec::new(),
+            )
+            .await
+            .expect("有自定义名字的空会话应当能建");
+        assert_eq!(named.title, "我的会话");
+        assert_eq!(named.turn_count, 0);
+    }
+
+    /// 测试工作区改名是就地覆盖，且不改标识、不碰别的字段。
+    ///
+    /// - 手段：新增工作区后 `rename_workspace`，再读回并列出。
+    /// - 判断：返回与读回的名字都是新的，标识与磁盘路径不变，工作区仍只有一个；
+    ///   空白名字被拒绝（[`StoreError::EmptyName`]）。
+    #[compio::test]
+    async fn rename_workspace_updates_name_in_place_() {
+        let (_guard, root) = temp_root_();
+        let store = Store::open(&root).await.expect("应当能打开存储");
+        let workspace = store
+            .add_workspace("旧名字", "/tmp/notes")
+            .await
+            .expect("应当能新增工作区");
+
+        let renamed = store
+            .rename_workspace(&workspace.workspace_id, "  新名字  ")
+            .await
+            .expect("应当能改名");
+        assert_eq!(renamed.name, "新名字", "首尾空白应当被去掉");
+        assert_eq!(renamed.workspace_id, workspace.workspace_id);
+        assert_eq!(renamed.path, workspace.path, "改名不应当动磁盘目录");
+
+        let read_back = store
+            .get_workspace(&workspace.workspace_id)
+            .await
+            .expect("应当能读回工作区");
+        assert_eq!(read_back.name, "新名字");
+        assert_eq!(
+            store
+                .list_workspaces()
+                .await
+                .expect("应当能列工作区")
+                .workspaces
+                .len(),
+            1
+        );
+
+        let error = store
+            .rename_workspace(&workspace.workspace_id, "   ")
+            .await
+            .expect_err("空白名字应当被拒绝");
+        assert!(
+            matches!(error, StoreError::EmptyName { .. }),
+            "实际错误: {error}"
+        );
     }
 
     /// 测试会话列表只回摘要，且按最近活动时间降序。
@@ -1136,7 +1293,11 @@ mod tests_ {
             .await
             .expect("应当能新增工作区");
         let created = store
-            .create_session(&workspace.workspace_id, None, Vec::new())
+            .create_session(
+                &workspace.workspace_id,
+                Some("待追加".to_string()),
+                Vec::new(),
+            )
             .await
             .expect("应当能新建会话");
 
@@ -1197,7 +1358,11 @@ mod tests_ {
         );
 
         let summary = store
-            .create_session(&workspace.workspace_id, None, Vec::new())
+            .create_session(
+                &workspace.workspace_id,
+                Some("待删除".to_string()),
+                Vec::new(),
+            )
             .await
             .expect("应当能新建会话");
         store

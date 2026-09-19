@@ -72,6 +72,8 @@ fn store_error_(error: StoreError) -> RpcError<Infallible> {
     let code = match &error {
         StoreError::NotFound { .. } => ErrorCode::NotFound,
         StoreError::InvalidId { .. } => ErrorCode::BadRequest,
+        // 调用方输入不合法（空名字、空的「新会话」）：业务拒绝，不是服务端故障。
+        StoreError::EmptySession | StoreError::EmptyName { .. } => ErrorCode::BadRequest,
         _ => ErrorCode::Internal,
     };
     RpcError::Business(ErrorReply {
@@ -190,6 +192,28 @@ where
         .map_err(store_error_)
 }
 
+/// [`TrWorkspaceService::rename_workspace`] 的服务端实现。
+#[gen_may_cancel_future(RenameWorkspace, pub)]
+pub async fn rename_workspace_async<'s, C>(
+    service: &'s KbService,
+    workspace_id: WorkspaceId,
+    name: String,
+    cancel: C,
+) -> Result<Workspace, RpcError<Infallible>>
+where
+    C: TrCancellationToken,
+{
+    if cancel.is_cancelled() {
+        return Err(cancelled_());
+    }
+    service
+        .store_
+        .rename_workspace(&workspace_id, &name)
+        .may_cancel_with(cancel)
+        .await
+        .map_err(store_error_)
+}
+
 /// [`TrSessionService::list_sessions`] 的服务端实现。
 #[gen_may_cancel_future(ListSessions, pub)]
 pub async fn list_sessions_async<'s, C>(
@@ -261,9 +285,23 @@ where
 /// 1. 把客户端给的那条问题原样记为 `user` 回合（`turn_id` 用客户端生成的那个）；
 /// 2. 生成一条 `assistant` 回合，正文是**问题按字符逆序**的结果，并挂一条说明性
 ///    [`Notice`]，让界面一眼看出这是模拟而不是真模型；
-/// 3. 用 [`Store::append_turns`] 把两条一起落盘（摘要里的 `turn_count` 与
+/// 3. 用 [`Store::append_turns`] 落盘（摘要里的 `turn_count` 与
 ///    `updated_at_millis` 由存储层维护）；
 /// 4. 回**提问之后**的完整会话。
+///
+/// # 幂等（草稿流程依赖它）
+///
+/// 客户端的「新会话」是一个**草稿**：首次提问时先发 `CreateSession`（把这个
+/// 问题作为首条 `user` 消息，好让 `kb_core` 据此起名），紧接着再发本条 `Ask`。
+/// 于是 `Ask` 到这里时，用户回合**已经存在**了。
+///
+/// 所以这里按 `turn_id` 去重：
+///
+/// - 已经有这一轮的用户回合 → 不再重复添加；
+/// - 已经有这一轮的助手回合（标识由用户回合确定性推导，见 [`answer_turn_id_`]）
+///   → 原样回会话，不再生成第二条回答。
+///
+/// 这让"先建会话、再提问"与"重试一次提问"都安全。
 ///
 /// 走"同步落盘再回详情"是为了先验证"新增会话内容在下次连线依然可见"这条目标；
 /// 换成真 LLM 时，这里会变成事件流（见 [`TrGeneration`] 的文档），
@@ -281,11 +319,35 @@ where
         return Err(cancelled_());
     }
 
-    // 先借 `request` 造好两条消息，再把它里面的标识移出来——反过来会变成
-    // "借一个已经被部分移走的变量"。
-    let turns = simulated_exchange_(&request);
-    let workspace_id = request.workspace_id;
-    let session_id = request.session_id;
+    let workspace_id = request.workspace_id.clone();
+    let session_id = request.session_id.clone();
+
+    let existing = service
+        .store_
+        .get_session(&workspace_id, &session_id)
+        .may_cancel_with(cancel.child_token())
+        .await
+        .map_err(store_error_)?;
+
+    let answer_id = answer_turn_id_(&request.turn_id);
+    let has_user = existing
+        .turns
+        .iter()
+        .any(|turn| turn.turn_id == request.turn_id);
+    let has_answer = existing
+        .turns
+        .iter()
+        .any(|turn| turn.turn_id == answer_id);
+
+    if has_answer {
+        return Ok(existing);
+    }
+
+    let mut turns = Vec::with_capacity(if has_user { 1 } else { 2 });
+    if !has_user {
+        turns.push(user_turn_(&request));
+    }
+    turns.push(assistant_turn_(&request, answer_id));
 
     service
         .store_
@@ -302,11 +364,9 @@ where
         .map_err(store_error_)
 }
 
-/// 构造一次"临时模拟 LLM"的问与答。
-///
-/// 抽成纯函数是为了能单测：逆序按**字符**（不是字节）进行，中文不会碎成半个。
-fn simulated_exchange_(request: &AskRequest) -> [Turn; 2] {
-    let user = Turn {
+/// 一次提问对应的用户回合。
+fn user_turn_(request: &AskRequest) -> Turn {
+    Turn {
         turn_id: request.turn_id.clone(),
         role: Role::User,
         text: request.question.clone(),
@@ -315,13 +375,23 @@ fn simulated_exchange_(request: &AskRequest) -> [Turn; 2] {
         tool_calls: Vec::new(),
         usage: None,
         notice: None,
-    };
+    }
+}
 
-    let assistant = Turn {
-        // 回答的标识由服务端生成：`turn_id` 标识的是"客户端发起的那一轮"。
-        turn_id: TurnId::generate(),
+/// 一次提问对应的助手回合标识：**由用户回合标识确定性推导**。
+///
+/// 不用随机标识，是为了让 [`ask_async`] 的"已经有这一轮回答"判断成立——
+/// 否则重试就会多出一条回答。
+fn answer_turn_id_(user_turn_id: &TurnId) -> TurnId {
+    TurnId::new(format!("{}-a", user_turn_id.as_str()))
+}
+
+/// 一次提问对应的助手回合（临时模拟的 LLM：正文是问题的逆序）。
+fn assistant_turn_(request: &AskRequest, turn_id: TurnId) -> Turn {
+    Turn {
+        turn_id,
         role: Role::Assistant,
-        text: request.question.chars().rev().collect(),
+        text: simulated_answer_(&request.question),
         reasoning: String::new(),
         state: TurnState::Done,
         tool_calls: Vec::new(),
@@ -330,9 +400,12 @@ fn simulated_exchange_(request: &AskRequest) -> [Turn; 2] {
             message: "（kb_core 临时模拟的 LLM：回答是把问题逆序输出）".to_string(),
             is_error: false,
         }),
-    };
+    }
+}
 
-    [user, assistant]
+/// 临时模拟的 LLM：把问题按**字符**（不是字节）逆序输出，中文不会碎成半个。
+fn simulated_answer_(question: &str) -> String {
+    question.chars().rev().collect()
 }
 
 /// [`TrSessionService::remove_session`] 的服务端实现。
@@ -352,6 +425,32 @@ where
     service
         .store_
         .remove_session(&workspace_id, &session_id)
+        .may_cancel_with(cancel)
+        .await
+        .map_err(store_error_)
+}
+
+/// [`TrSessionService::rename_session`] 的服务端实现。
+///
+/// `title` 只有空白时，存储层会回去从首条用户消息推导（见
+/// [`Store::rename_session`]），所以"清掉手工起的名字"也是一次普通调用。
+#[gen_may_cancel_future(RenameSession, pub)]
+pub async fn rename_session_async<'s, C>(
+    service: &'s KbService,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    title: String,
+    cancel: C,
+) -> Result<SessionSummary, RpcError<Infallible>>
+where
+    C: TrCancellationToken,
+{
+    if cancel.is_cancelled() {
+        return Err(cancelled_());
+    }
+    service
+        .store_
+        .rename_session(&workspace_id, &session_id, &title)
         .may_cancel_with(cancel)
         .await
         .map_err(store_error_)
@@ -387,6 +486,10 @@ impl TrWorkspaceService for KbService {
         = RemoveWorkspaceAsync<'f, 'f>
     where
         Self: 'f;
+    type RenameWorkspace<'f>
+        = RenameWorkspaceAsync<'f, 'f>
+    where
+        Self: 'f;
 
     fn list_workspaces<'f>(&'f self) -> Self::ListWorkspaces<'f> {
         ListWorkspacesAsync::new(self)
@@ -398,6 +501,14 @@ impl TrWorkspaceService for KbService {
 
     fn remove_workspace<'f>(&'f self, workspace_id: WorkspaceId) -> Self::RemoveWorkspace<'f> {
         RemoveWorkspaceAsync::new(self, workspace_id)
+    }
+
+    fn rename_workspace<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        name: String,
+    ) -> Self::RenameWorkspace<'f> {
+        RenameWorkspaceAsync::new(self, workspace_id, name)
     }
 }
 
@@ -416,6 +527,10 @@ impl TrSessionService for KbService {
         Self: 'f;
     type RemoveSession<'f>
         = RemoveSessionAsync<'f, 'f>
+    where
+        Self: 'f;
+    type RenameSession<'f>
+        = RenameSessionAsync<'f, 'f>
     where
         Self: 'f;
 
@@ -441,6 +556,15 @@ impl TrSessionService for KbService {
         session_id: SessionId,
     ) -> Self::RemoveSession<'f> {
         RemoveSessionAsync::new(self, workspace_id, session_id)
+    }
+
+    fn rename_session<'f>(
+        &'f self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        title: String,
+    ) -> Self::RenameSession<'f> {
+        RenameSessionAsync::new(self, workspace_id, session_id, title)
     }
 }
 
@@ -468,6 +592,26 @@ mod tests_ {
         let storage = guard.path().join("data");
         let runtime = guard.path().join("run");
         (guard, storage, runtime)
+    }
+
+    /// 向一个会话提一次问（测试用的小助手）。
+    async fn ask_(
+        service: &KbService,
+        workspace_id: &WorkspaceId,
+        session_id: &SessionId,
+        turn_id: &str,
+        question: &str,
+    ) -> SessionDetail {
+        service
+            .ask(AskRequest {
+                workspace_id: workspace_id.clone(),
+                session_id: session_id.clone(),
+                turn_id: TurnId::new(turn_id),
+                question: question.to_string(),
+                service_id: None,
+            })
+            .await
+            .expect("提问应当成功")
     }
 
     /// 测试"真存储 + 真 IPC"的整条链路：客户端 → 通道 → 派发 → `Store` → 磁盘。
@@ -622,30 +766,42 @@ mod tests_ {
         );
     }
 
-    /// 测试模拟 LLM 的问答构造：用户回合保留客户端回合标识，助手回合是问题逆序。
+    /// 测试模拟 LLM 的三小块：逆序、助手回合标识的确定性、用户回合的构造。
     ///
-    /// - 手段：用一个中文问题构造 [`simulated_exchange_`]。
-    /// - 判断：第一条是用户、`turn_id` 就是客户端给的那个；第二条是助手、正文
-    ///   等于按**字符**逆序的结果（中文按字而不是按字节倒过来）；助手回合带一条
-    ///   非错误的说明，提示这是模拟。
+    /// - 手段：用一个中文问题分别调用 [`simulated_answer_`]、[`answer_turn_id_`]
+    ///   与 [`user_turn_`]。
+    /// - 判断：回答按**字符**逆序（中文按字而不是按字节倒过来）；助手回合标识由
+    ///   用户回合标识确定性推导（同一个用户回合永远得到同一个回答标识，幂等靠它）；
+    ///   用户回合保留客户端给的 `turn_id` 与问题原文。
     #[test]
-    fn simulated_exchange_reverses_by_chars_() {
+    fn simulated_answer_reverses_by_chars_() {
+        assert_eq!(simulated_answer_("abc你好"), "好你cba");
+
+        let user_id = TurnId::new("t-1");
+        assert_eq!(answer_turn_id_(&user_id), TurnId::new("t-1-a"));
+        assert_eq!(
+            answer_turn_id_(&user_id),
+            answer_turn_id_(&user_id),
+            "同一个用户回合应当推导出同一个回答标识"
+        );
+
         let request = AskRequest {
             workspace_id: WorkspaceId::new("w-1"),
             session_id: SessionId::new("s-1"),
-            turn_id: TurnId::new("t-1"),
+            turn_id: user_id.clone(),
             question: "abc你好".to_string(),
             service_id: None,
         };
+        let user = user_turn_(&request);
+        assert_eq!(user.role, Role::User);
+        assert_eq!(user.turn_id, user_id);
+        assert_eq!(user.text, "abc你好");
 
-        let turns = simulated_exchange_(&request);
-        assert_eq!(turns[0].role, Role::User);
-        assert_eq!(turns[0].turn_id, TurnId::new("t-1"));
-        assert_eq!(turns[0].text, "abc你好");
-        assert_eq!(turns[1].role, Role::Assistant);
-        assert_eq!(turns[1].text, "好你cba");
-        assert_eq!(turns[1].state, TurnState::Done);
-        let notice = turns[1].notice.as_ref().expect("助手回合应当带说明");
+        let assistant = assistant_turn_(&request, answer_turn_id_(&request.turn_id));
+        assert_eq!(assistant.role, Role::Assistant);
+        assert_eq!(assistant.text, "好你cba");
+        assert_eq!(assistant.state, TurnState::Done);
+        let notice = assistant.notice.as_ref().expect("助手回合应当带说明");
         assert!(!notice.is_error, "说明不是错误: {}", notice.message);
     }
 
@@ -697,5 +853,171 @@ mod tests_ {
         assert_eq!(read_back.turns.len(), 2);
         assert_eq!(read_back.turns[0].text, "你好世界");
         assert_eq!(read_back.turns[1].text, "界世好你");
+    }
+
+    /// 测试 `Ask` 按 `turn_id` 幂等：同一轮重复提问不会产生第二条回答。
+    ///
+    /// - 手段：建会话后对同一个 `turn_id` 连问两次，再换一个 `turn_id` 问一次。
+    /// - 判断：前两次之后仍然只有两条消息（第二问没有追加任何东西）；
+    ///   换了标识之后变成四条——去重只对"这一轮"生效，不会吞掉新的一轮。
+    #[compio::test]
+    async fn ask_is_idempotent_for_the_same_turn_() {
+        let (_guard, storage, _runtime) = temp_dirs_();
+        let store = Store::open(&storage).await.expect("应当能打开存储");
+        let workspace = store
+            .add_workspace("笔记", "/tmp/notes")
+            .await
+            .expect("应当能新增工作区");
+        let session = store
+            .create_session(&workspace.workspace_id, Some("第一问".to_string()), Vec::new())
+            .await
+            .expect("应当能新建会话");
+        let service = KbService::new(store);
+
+        let first = ask_(
+            &service,
+            &workspace.workspace_id,
+            &session.session_id,
+            "t-1",
+            "你好",
+        )
+        .await;
+        assert_eq!(first.turns.len(), 2);
+
+        let again = ask_(
+            &service,
+            &workspace.workspace_id,
+            &session.session_id,
+            "t-1",
+            "你好",
+        )
+        .await;
+        assert_eq!(again.turns.len(), 2, "同一轮重复提问不应追加消息");
+
+        let next = ask_(
+            &service,
+            &workspace.workspace_id,
+            &session.session_id,
+            "t-2",
+            "再来一句",
+        )
+        .await;
+        assert_eq!(next.turns.len(), 4, "换一轮应当照常追加");
+    }
+
+    /// 测试草稿落到服务端的流程：`CreateSession` 带第一个问题 → `Ask` 只补回答。
+    ///
+    /// - 手段：用 `CreateSession { title: None, turns: [用户提问] }` 建会话
+    ///   （正是客户端草稿首次提问时发的形状），再用同一个 `turn_id` 调 `Ask`。
+    /// - 判断：标题由 `kb_core` 从第一个问题推导（不是「新会话」）；`Ask` 之后
+    ///   一共两条消息——用户回合没有被重复添加，问题与逆序回答都在。
+    #[compio::test]
+    async fn draft_flow_names_the_session_from_the_first_question_() {
+        let (_guard, storage, _runtime) = temp_dirs_();
+        let store = Store::open(&storage).await.expect("应当能打开存储");
+        let workspace = store
+            .add_workspace("笔记", "/tmp/notes")
+            .await
+            .expect("应当能新增工作区");
+
+        let question = "你好世界";
+        let summary = store
+            .create_session(
+                &workspace.workspace_id,
+                None,
+                vec![Turn {
+                    turn_id: TurnId::new("t-1"),
+                    role: Role::User,
+                    text: question.to_string(),
+                    reasoning: String::new(),
+                    state: TurnState::Done,
+                    tool_calls: Vec::new(),
+                    usage: None,
+                    notice: None,
+                }],
+            )
+            .await
+            .expect("带首问的会话应当能建");
+        assert_eq!(summary.title, question, "名字应当取自第一个问题");
+
+        let service = KbService::new(store);
+        let detail = ask_(
+            &service,
+            &workspace.workspace_id,
+            &summary.session_id,
+            "t-1",
+            question,
+        )
+        .await;
+
+        assert_eq!(detail.turns.len(), 2, "问题不应当被重复添加");
+        assert_eq!(detail.turns[0].text, question);
+        assert_eq!(detail.turns[1].text, "界世好你");
+    }
+
+    /// 测试服务端的两个重命名都会落盘，并且拒绝空名字。
+    ///
+    /// - 手段：建工作区与会话后分别调 `rename_workspace` / `rename_session`，
+    ///   再用同一个存储根目录重新 `Store::open` 读回；最后试一次空的工作区名。
+    /// - 判断：返回与读回的名字 / 标题都是新的；空白工作区名是
+    ///   `RpcError::Business(BadRequest)`——调用方输入不合法，不是服务端故障。
+    #[compio::test]
+    async fn rename_workspace_and_session_through_the_service_() {
+        let (_guard, storage, _runtime) = temp_dirs_();
+        let store = Store::open(&storage).await.expect("应当能打开存储");
+        let workspace = store
+            .add_workspace("旧名", "/tmp/notes")
+            .await
+            .expect("应当能新增工作区");
+        let session = store
+            .create_session(&workspace.workspace_id, Some("旧标题".to_string()), Vec::new())
+            .await
+            .expect("应当能新建会话");
+        let service = KbService::new(store);
+
+        let renamed_workspace = service
+            .rename_workspace(workspace.workspace_id.clone(), "新名".to_string())
+            .await
+            .expect("工作区改名应当成功");
+        assert_eq!(renamed_workspace.name, "新名");
+        assert_eq!(renamed_workspace.workspace_id, workspace.workspace_id);
+
+        let renamed_session = service
+            .rename_session(
+                workspace.workspace_id.clone(),
+                session.session_id.clone(),
+                "新标题".to_string(),
+            )
+            .await
+            .expect("会话改名应当成功");
+        assert_eq!(renamed_session.title, "新标题");
+
+        let reopened = Store::open(&storage).await.expect("应当能重新打开存储");
+        assert_eq!(
+            reopened
+                .get_workspace(&workspace.workspace_id)
+                .await
+                .expect("应当能读回工作区")
+                .name,
+            "新名"
+        );
+        assert_eq!(
+            reopened
+                .get_session(&workspace.workspace_id, &session.session_id)
+                .await
+                .expect("应当能读回会话")
+                .summary
+                .title,
+            "新标题"
+        );
+
+        let error = service
+            .rename_workspace(workspace.workspace_id.clone(), "   ".to_string())
+            .await
+            .expect_err("空白名字应当被拒绝");
+        match error {
+            RpcError::Business(reply) => assert_eq!(reply.code, ErrorCode::BadRequest),
+            other => panic!("应当是业务错误，实际: {other:?}"),
+        }
     }
 }
