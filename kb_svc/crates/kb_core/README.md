@@ -398,7 +398,6 @@ kb_admin_desktop / 测试客户端
 - `dev-notes/kb_svc_servo_ipc-20260917-1548.md`：IPC 落地方案、
   三个未知数的实测结论、以及本 crate 与 IPC 的分工；
 - `dev-notes/abs_kb_svc-20260917-1254.md`：IPC 选型（ipc-channel）与异步 RPC 设计；
-- `dev-notes/kb_admin_desktop-20260917-1341.md`：客户端通信需求与协议数据来源；
 - `kb_svc/crates/abs_kb_svc_v1_desktop/README.md`：协议 v1 的定位、契约与接口形状；
 - `kb_svc/crates/abs_kb_svc/README.md`：协议聚合层（`abs_kb_svc::v1::desktop` 从哪来）；
 - `kb_svc/crates/abs_kb_core_handshake/README.md`：系统层握手（`IpcReadyNotice`）；

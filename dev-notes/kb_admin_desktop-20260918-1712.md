@@ -7,8 +7,6 @@
   **不做**会话正文（`GetSession`）与 `kb_core` 的模拟 LLM；
   **不做**工作区 / 会话的"改"。
 - 前置：
-  - [`kb_admin_desktop-20260918-1034.md`](kb_admin_desktop-20260918-1034.md) §11–§14：
-    连接链路、FRB 的扁平 DTO 约定、上一轮"只读列表"的结论；
   - [`kb_core-20260917-1527.md`](kb_core-20260917-1527.md)：本地文件存储的布局与语义；
   - [`llm_kb-20260917-1655.md`](llm_kb-20260917-1655.md)：项目级落位表与未决项。
 
@@ -232,8 +230,6 @@ Flutter/Dart 在 `/root/develop/flutter/bin`。
 
 ## 6. 相关文档
 
-- [`kb_admin_desktop-20260918-1034.md`](kb_admin_desktop-20260918-1034.md)：
-  连接配置、三种连接方式、FRB 的扁平 DTO 约定、上一轮的只读列表；
 - `kb_clients/crates/kb_client_conn_mgr/README.md`：本轮的 4 个新方法；
 - `kb_clients/kb_admin_desktop/README.md`：界面上的入口与"本轮边界"；
 - `kb_svc/crates/kb_core/src/store_/mod.rs`：落盘布局与"会话属于工作区"的语义；

@@ -117,5 +117,4 @@ cargo run -p kb_client_conn_mgr --example connect -- tcp 127.0.0.1:8788
 
 - [`kb_client_config`](../kb_client_config/README.md)：连接方式从哪来；
 - [`kb_core_starter`](../../../kb_plugins/crates/kb_core_starter/README.md)：系统层握手的本机那一半；
-- [`kb_core_rproxy_wire`](../../../kb_plugins/crates/kb_core_rproxy_wire/README.md)：远程那一半的帧格式；
-- `dev-notes/kb_admin_desktop-20260918-1034.md`：三种连接方式与配置的决策过程。
+- [`kb_core_rproxy_wire`](../../../kb_plugins/crates/kb_core_rproxy_wire/README.md)：远程那一半的帧格式。

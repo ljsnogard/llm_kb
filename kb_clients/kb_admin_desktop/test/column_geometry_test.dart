@@ -27,6 +27,27 @@ void main() {
     });
   });
 
+  group('窗口最小尺寸', () {
+    /// 测试最小窗口宽度容得下"折叠侧边栏 + 中间区 + 右侧栏"三者。
+    ///
+    /// - 手段：把 [DswLayout] 里的三个下界相加，再与 `minWindowWidth` 比较。
+    /// - 判断：最小宽度 ≥ 三栏下界之和。窗口窄于 `sidebarAutoCollapse` 时侧边栏
+    ///   会自动折叠，所以这里按折叠轨道（56）算。
+    ///
+    /// 这条断言是**三端原生 runner 的同步锚点**：`linux/runner/my_application.cc`、
+    /// `windows/runner/win32_window.cpp`、`macos/Runner/MainFlutterWindow.swift`
+    /// 里各自硬编码了 800×520，改这里时那边要一起改。
+    test('最小宽度容得下折叠侧边栏 + 中间区 + 右侧栏', () {
+      final double requiredWidth =
+          DswLayout.sidebarCollapsed +
+          DswLayout.centerMin +
+          DswLayout.rightbarMin;
+      expect(DswLayout.minWindowWidth, greaterThanOrEqualTo(requiredWidth));
+      // 高度至少要有列头（76）加输入区加几行消息的余地。
+      expect(DswLayout.minWindowHeight, greaterThanOrEqualTo(480));
+    });
+  });
+
   group('ColumnGeometry.solve', () {
     /// 测试中间区有足够空间时两侧各得其所。
     /// - 手段：视口 1920、侧边栏偏好 280、右侧栏偏好 864。

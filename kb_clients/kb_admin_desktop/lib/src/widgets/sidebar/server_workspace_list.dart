@@ -412,27 +412,128 @@ class _WorkspaceTileState extends State<_WorkspaceTile> {
             );
           },
         ),
+        // 草稿会话**不受折叠影响**：点「新会话」之后它必须立刻可见，
+        // 而且它代表"正在进行的工作"，收起服务端会话时也留在原地。
+        if (connection.hasDraftSession(workspace.id))
+          _DraftSessionRow(
+            selected: connection.isDraftSelected(workspace.id),
+            onTap: () => connection.selectDraftSession(workspace.id),
+            onDiscard: () => connection.discardDraftSession(workspace.id),
+          ),
         if (widget.expanded)
-          if (loading && sessions.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(left: 24, top: 6, bottom: 6),
-              child: _Caption('正在读取会话…'),
-            )
-          else if (sessions.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(left: 24, top: 6, bottom: 6),
-              child: _Caption('还没有会话，点工作区行上的 + 新建'),
-            )
-          else
-            for (final SessionView session in sessions)
-              _SessionRow(
-                session: session,
-                selected: connection.selectedSessionId == session.id,
-                onTap: () => connection.selectSession(workspace.id, session.id),
-                onRename: () => widget.onRenameSession(session),
-                onDelete: () => widget.onRemoveSession(session),
-              ),
+          ..._sessionChildren_(
+            connection: connection,
+            workspace: workspace,
+            sessions: sessions,
+            loading: loading,
+          ),
       ],
+    );
+  }
+
+  /// 展开一个工作区时要渲染的那一串服务端会话（草稿由 [build] 单独渲染）。
+  List<Widget> _sessionChildren_({
+    required ConnectionController connection,
+    required WorkspaceView workspace,
+    required List<SessionView> sessions,
+    required bool loading,
+  }) {
+    final bool hasDraft = connection.hasDraftSession(workspace.id);
+    final List<Widget> children = <Widget>[];
+
+    if (loading && sessions.isEmpty) {
+      children.add(
+        const Padding(
+          padding: EdgeInsets.only(left: 24, top: 6, bottom: 6),
+          child: _Caption('正在读取会话…'),
+        ),
+      );
+      return children;
+    }
+
+    if (sessions.isEmpty) {
+      // 有草稿时不再提示"还没有会话"——那条草稿就是会话。
+      if (!hasDraft) {
+        children.add(
+          const Padding(
+            padding: EdgeInsets.only(left: 24, top: 6, bottom: 6),
+            child: _Caption('还没有会话，点工作区行上的 + 新建'),
+          ),
+        );
+      }
+      return children;
+    }
+
+    for (final SessionView session in sessions) {
+      children.add(
+        _SessionRow(
+          session: session,
+          selected: connection.selectedSessionId == session.id,
+          onTap: () => connection.selectSession(workspace.id, session.id),
+          onRename: () => widget.onRenameSession(session),
+          onDelete: () => widget.onRemoveSession(session),
+        ),
+      );
+    }
+    return children;
+  }
+}
+
+/// 一条**草稿会话**（点「新会话」后先出现在这里，还没有同步到 `kb_core`）。
+///
+/// 它没有会话标识，所以不能改名；可以在悬停时直接放弃。
+class _DraftSessionRow extends StatelessWidget {
+  const _DraftSessionRow({
+    required this.selected,
+    required this.onTap,
+    required this.onDiscard,
+  });
+
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onDiscard;
+
+  @override
+  Widget build(BuildContext context) {
+    final DswColors c = context.dsw;
+    return HoverBuilder(
+      builder: (BuildContext context, bool hovered) {
+        return Padding(
+          padding: const EdgeInsets.only(left: 18),
+          child: DswListRow(
+            height: 32,
+            selected: selected || hovered,
+            onTap: onTap,
+            leading: Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(
+                color: c.labelCaption,
+                shape: BoxShape.circle,
+              ),
+            ),
+            title: '新会话',
+            trailing: hovered
+                ? <Widget>[
+                    DswIconButton(
+                      tooltip: '放弃这个新会话',
+                      size: 24,
+                      iconSize: 16,
+                      icon: Icons.close,
+                      onPressed: onDiscard,
+                    ),
+                  ]
+                : <Widget>[
+                    Text(
+                      '未同步',
+                      style: DswTypography.caption.copyWith(
+                        color: c.labelCaption,
+                      ),
+                    ),
+                  ],
+          ),
+        );
+      },
     );
   }
 }

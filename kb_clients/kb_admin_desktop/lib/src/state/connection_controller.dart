@@ -73,6 +73,12 @@ class ConnectionController extends ChangeNotifier {
   /// 用这条消息作为首条 `Turn` 去 `CreateSession`——名字由 `kb_core` 从问题推导。
   bool _draftSession = false;
 
+  /// 哪些工作区里已经有一个**还没落盘的草稿会话**。
+  ///
+  /// 侧边栏据此在每个工作区下多渲染一条「新会话」的行（内部状态是"未同步"，
+  /// 没有会话标识）。每个工作区最多一个；首次提问成功后就从集合里移走。
+  final Set<String> _draftWorkspaces = <String>{};
+
   /// 已经拉到的会话正文，按会话标识缓存。
   final Map<String, SessionDetailReport> _details = <String, SessionDetailReport>{};
   final Set<String> _loadingDetails = <String>{};
@@ -155,6 +161,14 @@ class ConnectionController extends ChangeNotifier {
 
   /// 是不是正处在一个还没落盘的**草稿会话**里（界面上显示为「新会话」）。
   bool get draftingSession => _draftSession;
+
+  /// 某个工作区里有没有草稿会话（未同步的新会话）。
+  bool hasDraftSession(String workspaceId) =>
+      _draftWorkspaces.contains(workspaceId);
+
+  /// 当前选中的是不是 [workspaceId] 里那个草稿会话。
+  bool isDraftSelected(String workspaceId) =>
+      _draftSession && _selectedWorkspaceId == workspaceId;
 
   /// 当前选中的会话摘要（来自列表缓存）。
   SessionView? get selectedServerSession {
@@ -331,6 +345,7 @@ class ConnectionController extends ChangeNotifier {
       if (report.ok) {
         _workspaces = report.workspaces;
         _sessions.clear();
+        _pruneDrafts_();
         _resetSessionSelection_();
         _error = '';
         if (_selectedWorkspaceId == null ||
@@ -477,6 +492,7 @@ class ConnectionController extends ChangeNotifier {
         return report.error;
       }
       _sessions.remove(workspaceId);
+      _draftWorkspaces.remove(workspaceId);
       if (_selectedWorkspaceId == workspaceId) {
         _selectedWorkspaceId = null;
       }
@@ -490,8 +506,9 @@ class ConnectionController extends ChangeNotifier {
 
   /// 在某个工作区里开一个**草稿会话**（客户端本地状态，不落盘）。
   ///
-  /// 界面上显示为「新会话」；用户发出第一条消息时才会 `CreateSession`（带着那条
-  /// 消息，好让 `kb_core` 据此起名），所以"空的「新会话」"永远不会出现在磁盘上。
+  /// 侧边栏会立刻在那个工作区下多出一条「新会话」的行（未同步、没有会话标识），
+  /// 并把它选中；用户发出第一条消息时才会 `CreateSession`（带着那条消息，好让
+  /// `kb_core` 据此起名），所以"空的「新会话」"永远不会出现在磁盘上。
   /// 返回空串表示成功。
   Future<String> startDraftSession(String workspaceId) async {
     if (!connected) {
@@ -500,12 +517,40 @@ class ConnectionController extends ChangeNotifier {
     if (!_workspaces.any((WorkspaceView item) => item.id == workspaceId)) {
       return '工作区不存在，先刷新一下';
     }
+    _draftWorkspaces.add(workspaceId);
     _selectedWorkspaceId = workspaceId;
     _selectedSessionId = null;
     _selectedSessionWorkspaceId = null;
     _draftSession = true;
     notifyListeners();
     return '';
+  }
+
+  /// 选中某个工作区里已有的草稿会话（只是把界面切过去，不会重建）。
+  ///
+  /// 草稿不存在时什么都不做——调用方（侧边栏的行）只在草稿存在时渲染。
+  void selectDraftSession(String workspaceId) {
+    if (!_draftWorkspaces.contains(workspaceId)) {
+      return;
+    }
+    _selectedWorkspaceId = workspaceId;
+    _selectedSessionId = null;
+    _selectedSessionWorkspaceId = null;
+    _draftSession = true;
+    notifyListeners();
+  }
+
+  /// 放弃一个草稿会话。
+  ///
+  /// 纯客户端操作：`kb_core` 从来不知道它存在过，所以不需要任何请求。
+  void discardDraftSession(String workspaceId) {
+    if (!_draftWorkspaces.remove(workspaceId)) {
+      return;
+    }
+    if (_draftSession && _selectedWorkspaceId == workspaceId) {
+      _draftSession = false;
+    }
+    notifyListeners();
   }
 
   /// 重命名一个工作区；返回空串表示成功。
@@ -656,6 +701,7 @@ class ConnectionController extends ChangeNotifier {
       }
 
       _draftSession = false;
+      _draftWorkspaces.remove(workspace.id);
       _selectedWorkspaceId = workspace.id;
       _selectedSessionId = targetSessionId;
       _selectedSessionWorkspaceId = workspace.id;
@@ -677,6 +723,17 @@ class ConnectionController extends ChangeNotifier {
     _draftSession = false;
     _details.clear();
     _loadingDetails.clear();
+  }
+
+  /// 丢掉那些工作区已经不在列表里的草稿会话。
+  ///
+  /// 草稿是客户端状态，刷新工作区列表时不应当连它一起清掉；只有当它挂靠的
+  /// 工作区真的没了（被删掉），才跟着消失。
+  void _pruneDrafts_() {
+    _draftWorkspaces.removeWhere(
+      (String id) =>
+          !_workspaces.any((WorkspaceView item) => item.id == id),
+    );
   }
 
   /// 生成一个回合标识（协议要求它由客户端生成）。
@@ -746,6 +803,7 @@ class ConnectionController extends ChangeNotifier {
     _selectedWorkspaceId = null;
     _workspaces = const <WorkspaceView>[];
     _sessions.clear();
+    _draftWorkspaces.clear();
     _resetSessionSelection_();
 
     await _refreshLocked();
@@ -782,6 +840,7 @@ class ConnectionController extends ChangeNotifier {
     _workspaces = const <WorkspaceView>[];
     _sessions.clear();
     _selectedWorkspaceId = null;
+    _draftWorkspaces.clear();
     _resetSessionSelection_();
   }
 

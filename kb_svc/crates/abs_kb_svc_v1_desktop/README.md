@@ -25,9 +25,7 @@
 >
 > 背景、证据与待决策项见：
 > - [`dev-notes/abs_kb_svc-20260917-1254.md`](../../../dev-notes/abs_kb_svc-20260917-1254.md)（定位与选型决策）
-> - [`dev-notes/kb_admin_desktop-20260917-1341.md`](../../../dev-notes/kb_admin_desktop-20260917-1341.md)（客户端通信需求调查）
 > - [`dev-notes/kb_svc_servo_ipc-20260917-1548.md`](../../../dev-notes/kb_svc_servo_ipc-20260917-1548.md)（IPC 落地方案与 trait 形状验证）
-> - [`dev-notes/kb_admin_desktop-20260918-1034.md`](../../../dev-notes/kb_admin_desktop-20260918-1034.md) §9（本次拆分的来龙去脉）
 
 ---
 
@@ -340,4 +338,3 @@ impl TrWorkspaceService for MyService {
 - ~~会话历史的归属~~ → 已定：工作区与会话**由 `kb_core` 管理并多端同步**，
   历史留在服务端，`GetSession` / `SessionDetail` / `SessionChanged` 保留。
   客户端的"当前选中"仍然留在本地。
-  详见 dev-notes `kb_admin_desktop-20260917-1341.md` §5.1。

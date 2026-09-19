@@ -106,7 +106,6 @@ TCP 读半 ──► buffex::circular_buff（64 KiB 有界）──► 帧解码
 
 ## 相关文档
 
-- `dev-notes/kb_core_rproxy-20260917-1749.md`：可行性研究与已拍板的决定；
 - `abs_kb_core_handshake/README.md`：系统层握手（`IpcReadyNotice`）；
 - `abs_kb_svc_v1_desktop/src/handshake_.rs`：两个层面握手的完整说明；
 - `kb_svc_servo_ipc`（crate 文档）：本机 IPC 的引导机制。

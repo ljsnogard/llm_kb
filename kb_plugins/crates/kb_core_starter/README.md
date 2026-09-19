@@ -92,6 +92,4 @@ cargo test -p kb_core_starter
 - [`abs_kb_core_handshake`](../../../kb_svc/crates/abs_kb_core_handshake/README.md)：
   两个层面握手各自解决什么、为什么分开；
 - [`kb_core_rproxy`](../kb_core_rproxy/README.md)：
-  本 crate 的第一个调用方（网关）；
-- `dev-notes/kb_admin_desktop-20260918-1034.md` §9：
-  为什么把它从 rproxy 里提取出来，以及"两个层次都算公开协议"这条决定的来龙去脉。
+  本 crate 的第一个调用方（网关）。

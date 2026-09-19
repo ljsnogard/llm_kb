@@ -18,6 +18,13 @@ namespace {
 
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
+/// 窗口允许缩到的最小尺寸（逻辑像素，逻辑 96 DPI）。
+///
+/// 与 Dart 侧 `DswLayout.minWindowWidth` / `minWindowHeight` 一致；实际下界会在
+/// `WM_GETMINMAXINFO` 里按当前 DPI 换算成物理像素。改动时三端一并改。
+constexpr int kMinWindowWidth = 800;
+constexpr int kMinWindowHeight = 520;
+
 /// Registry key for app theme preference.
 ///
 /// A value of 0 indicates apps should use dark mode. A non-zero or missing
@@ -197,6 +204,16 @@ Win32Window::MessageHandler(HWND hwnd,
 
       return 0;
     }
+    case WM_GETMINMAXINFO: {
+      // 拖动缩放时的下界；DPI 不同，物理像素也要跟着变。
+      auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
+      const UINT dpi = FlutterDesktopGetDpiForHWND(hwnd);
+      const double scale_factor = dpi / 96.0;
+      info->ptMinTrackSize.x = Scale(kMinWindowWidth, scale_factor);
+      info->ptMinTrackSize.y = Scale(kMinWindowHeight, scale_factor);
+      return 0;
+    }
+
     case WM_SIZE: {
       RECT rect = GetClientArea();
       if (child_content_ != nullptr) {

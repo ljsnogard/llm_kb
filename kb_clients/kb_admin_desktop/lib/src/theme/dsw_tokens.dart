@@ -142,6 +142,23 @@ abstract final class DswLayout {
   /// 拖拽热区的宽度（DSH 的 `.handle` 是 8px，左右各溢出 4px）。
   static const double resizeHandleWidth = 8;
 
+  /// 窗口允许缩到的最小宽度（逻辑像素）。
+  ///
+  /// 由布局反推：折叠轨道 [sidebarCollapsed] 56 + 中间区最小 [centerMin] 400 +
+  /// 右侧栏最小 [rightbarMin] 300 = 756，取 800 留一点余量。窗口窄于
+  /// [sidebarAutoCollapse] 时侧边栏本来就会自动折叠，所以这里是"最紧的那种形态"。
+  ///
+  /// **原生 runner 读不到这个常量**，三个平台各自硬编码了同一个数值：
+  /// `linux/runner/my_application.cc`、`windows/runner/win32_window.cpp`、
+  /// `macos/Runner/MainFlutterWindow.swift`。改动时三处要一起改
+  /// （`test/column_geometry_test.dart` 有一条断言守着这个关系）。
+  static const double minWindowWidth = 800;
+
+  /// 窗口允许缩到的最小高度：列头 76 + 输入区约 64 + 若干行消息。
+  ///
+  /// 同样需要在三个原生 runner 里同步（见 [minWindowWidth]）。
+  static const double minWindowHeight = 520;
+
   /// 把宽度夹到侧边栏的合法区间并取整（DSH 的 `clampWidth` 也会 round）。
   static double clampSidebar(double px) =>
       px.clamp(sidebarMin, sidebarMax).roundToDouble();

@@ -54,6 +54,15 @@ static void my_application_activate(GApplication* application) {
 
   gtk_window_set_default_size(window, 1280, 720);
 
+  // 最小窗口尺寸：拖动缩放时不允许比它更小。
+  // 数值与 Dart 侧 `DswLayout.minWindowWidth` / `minWindowHeight` 一致
+  // （折叠轨道 56 + 中间区最小 400 + 右侧栏最小 300 ≈ 800 宽；
+  //   列头 + 输入区 + 若干行消息 ≈ 520 高）。改动时三端一并改。
+  GdkGeometry geometry = {};
+  geometry.min_width = 800;
+  geometry.min_height = 520;
+  gtk_window_set_geometry_hints(window, nullptr, &geometry, GDK_HINT_MIN_SIZE);
+
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
       project, self->dart_entrypoint_arguments);

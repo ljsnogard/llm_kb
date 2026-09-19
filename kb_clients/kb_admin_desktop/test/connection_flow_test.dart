@@ -673,6 +673,8 @@ void main() {
     final String draftError = await connection.startDraftSession('w-1');
     expect(draftError, isEmpty);
     expect(connection.draftingSession, isTrue);
+    expect(connection.hasDraftSession('w-1'), isTrue);
+    expect(connection.isDraftSelected('w-1'), isTrue);
     expect(connection.selectedSessionId, isNull);
     expect(
       api.calls.where((String call) => call.startsWith('createSession')),
@@ -684,6 +686,7 @@ void main() {
 
     expect(error, isEmpty);
     expect(connection.draftingSession, isFalse);
+    expect(connection.hasDraftSession('w-1'), isFalse);
     expect(
       api.calls.indexOf('createSession:w-1'),
       lessThan(api.calls.indexWhere((String call) => call.startsWith('ask:'))),
@@ -697,6 +700,32 @@ void main() {
     expect(detail!.turns.length, 2);
     expect(detail.turns[0].text, '你好世界');
     expect(detail.turns[1].text, '界世好你');
+  });
+
+  /// 测试放弃草稿会话：纯客户端操作，不碰服务端。
+  ///
+  /// - 手段：开一个草稿后调 `discardDraftSession`。
+  /// - 判断：草稿从集合里消失、选中态也清掉；假接口没有收到任何删除 / 创建请求
+  ///   ——`kb_core` 从来不知道它存在过。
+  test('放弃草稿会话不发请求', () async {
+    final _FakeApi api = _FakeApi(profiles: <ConnectionView>[_profile('本机')]);
+    final ConnectionController connection = ConnectionController(api);
+    await connection.initialize();
+
+    await connection.startDraftSession('w-1');
+    connection.discardDraftSession('w-1');
+
+    expect(connection.hasDraftSession('w-1'), isFalse);
+    expect(connection.draftingSession, isFalse);
+    expect(connection.isDraftSelected('w-1'), isFalse);
+    expect(
+      api.calls.where(
+        (String call) =>
+            call.startsWith('createSession') ||
+            call.startsWith('removeSession'),
+      ),
+      isEmpty,
+    );
   });
 
   /// 测试工作区改名：提交给服务端并刷新列表。
@@ -929,13 +958,17 @@ void main() {
     expect(find.text('好你'), findsOneWidget);
   });
 
-  /// 测试界面上的草稿会话：点「新会话」→ 输入第一个问题 → 会话才被创建。
+  /// 测试界面上的草稿会话：点「新会话」→ 侧边栏立刻出现「新会话」行 → 输入第一个
+  /// 问题后才在 `kb_core` 上建会话。
   ///
   /// - 手段：连上假接口、渲染应用；点侧边栏顶部的「新会话」按钮，直接在输入框里
   ///   输入问题并发送。
-  /// - 判断：假接口先收到 `createSession:w-1` 再收到 `ask:`；会话列表里出现一条
-  ///   以问题为标题的会话；对话区显示问题与逆序回答。
-  testWidgets('点「新会话」后第一个问题才创建会话', (WidgetTester tester) async {
+  /// - 判断：点完按钮后侧边栏多出一条「未同步」的「新会话」行（而且此时还没有任何
+  ///   `createSession` 请求）；发送之后那条草稿行消失、换成以问题为标题的真会话，
+  ///   对话区显示问题与逆序回答。
+  testWidgets('点「新会话」后侧边栏出现草稿行，首个问题才创建会话', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(1400, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -956,6 +989,22 @@ void main() {
     await tester.pumpAndSettle();
     expect(connection.draftingSession, isTrue);
 
+    // 侧边栏立刻能看到这条草稿：标题「新会话」、状态「未同步」。
+    final Finder sidebar = find.byType(ServerWorkspaceList);
+    expect(
+      find.descendant(of: sidebar, matching: find.text('新会话')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.text('未同步')),
+      findsOneWidget,
+    );
+    expect(
+      api.calls.where((String call) => call.startsWith('createSession')),
+      isEmpty,
+      reason: '草稿阶段不应当请求服务端',
+    );
+
     await tester.enterText(find.byType(TextField), '你好世界');
     await tester.pumpAndSettle();
     await tester.tap(find.byType(SendArrowIcon));
@@ -964,6 +1013,15 @@ void main() {
     expect(api.calls, contains('createSession:w-1'));
     expect(connection.draftingSession, isFalse);
     expect(connection.selectedServerSession?.title, '你好世界');
+    expect(
+      find.descendant(of: sidebar, matching: find.text('新会话')),
+      findsNothing,
+      reason: '草稿已经变成真会话',
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.text('你好世界')),
+      findsOneWidget,
+    );
     expect(find.text('界世好你'), findsOneWidget);
   });
 }
